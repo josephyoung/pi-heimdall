@@ -1,6 +1,6 @@
 {
   "name": "@casualjim/pi-heimdall",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Guardian extensions for pi — blocks accidental secret exposure from bash, read, sops, and kubectl tool calls",
   "keywords": [
     "pi-package",
