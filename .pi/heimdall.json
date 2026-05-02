@@ -1,0 +1,14 @@
+{
+  "commandPolicies": [
+    {
+      "name": "no-cargo-test",
+      "blocked": ["cargo", "test"],
+      "message": "Use `mise test` or `mise run test` instead of `cargo test`."
+    },
+    {
+      "name": "no-cargo-nextest",
+      "blocked": ["cargo", "nextest"],
+      "message": "Use `mise test` or `mise run --force test` instead of `cargo nextest`."
+    }
+  ]
+}

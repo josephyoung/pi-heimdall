@@ -10,7 +10,7 @@ Ported from the equivalent [opencode](https://opencode.ai) plugins.
 
 ## What it does
 
-pi-heimdall ships four independent extensions. Each one intercepts tool calls
+pi-heimdall ships five independent extensions. Each one intercepts tool calls
 before they run (and, in one case, after they return) and blocks or redacts
 anything that would leak secrets to the LLM context.
 
@@ -19,6 +19,7 @@ anything that would leak secrets to the LLM context.
 | `env-protect` | `read` | Reading `.env`, `.env.*`, `.envrc`, `*.env` — except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults` |
 | `kubectl-secret-guard` | `bash` | `kubectl get secrets`, `kubectl patch ... finalizers`, `kubectl exec` into a pod that dumps env / `/var/run/secrets` / `app.ini` |
 | `sops-secret-guard` | `bash` | Any `sops` invocation that would decrypt content: `sops decrypt`, `sops -d`, `sops --decrypt`, `sops exec-env`, `sops exec-file`, `sops edit`, and bare `sops <file>` |
+| `command-policy-guard` | `bash` | Commands that violate repo policy as defined in `.pi/heimdall.json` (e.g. blocking `cargo test` in favour of `mise test`) |
 | `secret-guard` | `bash` | Commands that reference secret env var names from a project `.env.json`, and redacts their values from bash output (plaintext, base64, rot13, reversed, hex, and hexdump-decoded) |
 
 All four are **independent** — enable whichever subset you need.
@@ -85,9 +86,75 @@ Use pi's package filter to narrow down which files load:
 
 Or use `pi config` interactively.
 
+## Configuring `command-policy-guard`
+
+`command-policy-guard` reads repo-specific command policies from `.pi/heimdall.json`
+at the project root. If the file is missing, the guard does nothing.
+
+Example `.pi/heimdall.json`:
+
+```json
+{
+  "commandPolicies": [
+    {
+      "name": "no-cargo-test",
+      "blocked": ["cargo", "test"],
+      "message": "Use `mise test` or `mise run test` instead of `cargo test`."
+    },
+    {
+      "name": "no-cargo-nextest",
+      "blocked": ["cargo", "nextest"],
+      "message": "Use `mise test` or `mise run --force test` instead of `cargo nextest`."
+    }
+  ]
+}
+```
+
+Each policy has three fields:
+
+- **`name`** — a human-readable identifier used in block messages.
+- **`blocked`** — an array of tokens that must appear at the start of a command.
+  Prefix matching is used, so `["cargo", "test"]` blocks `cargo test`,
+  `cargo test --lib`, `cargo test foo::bar`, etc.
+- **`message`** — the explanation shown to the model when a command is blocked.
+
+The command line is properly tokenized (respecting single quotes, double quotes,
+and backslash escapes) and each shell segment (commands separated by `;`, `|`,
+`&&`, `||`, or newlines) is checked independently.
+
+### Bypass hardening
+
+The guard handles several patterns a motivated LLM might try:
+
+- **Env prefixes**: `CARGO_TARGET_DIR=/tmp cargo test` — `KEY=value` tokens
+  before the command are skipped.
+- **Wrapper commands**: `sudo cargo test`, `env cargo test`, `eval cargo test` —
+  known wrappers are skipped before matching.
+- **Shell groups**: `{ cargo test; }`, `( cargo test )` — `{` and `(` prefix
+  tokens are skipped.
+- **Shell `-c` recursion**: `bash -c 'cargo test'` — the `-c` argument is
+  recursively parsed through the full pipeline (segments, heredocs, policies).
+- **Path-qualified commands**: `/usr/bin/cargo test`, `~/.cargo/bin/cargo test` —
+  basename matching resolves `cargo` from any path.
+- **Backslash escapes**: `car\go test` — escapes are consumed during
+  tokenization so the result matches `cargo`.
+- **Quote splicing**: `ca''rgo test`, `ca""rgo test` — empty quotes are
+  stripped during tokenization.
+- **Heredocs**: `cat <<EOF\ncargo test\nEOF` — heredoc bodies are excluded
+  from matching to avoid false positives.
+
+### Known acceptable gaps
+
+Some patterns cannot be caught without a full shell interpreter:
+
+- `timeout 60 cargo test` — wrappers that take arguments before the command
+- `docker run cargo test`, `ssh host cargo test` — indirect execution
+- `python3 -c "os.system('cargo test')"` — embedded language execution
+- `nix develop -c cargo test` — tool-specific wrappers
+
 ## Configuring `secret-guard`
 
-`secret-guard` is the only guard that needs configuration. Create a `.env.json`
+`secret-guard` is the other guard that needs configuration. Create a `.env.json`
 at your project root listing the environment variables that should be treated
 as secrets. **Values in the JSON are ignored — only the keys matter.** The
 actual secret values are captured from `process.env` when pi starts.
@@ -137,6 +204,7 @@ the block in real time.
 
 ```
 extensions/
+├── command-policy-guard.ts
 ├── env-protect.ts
 ├── kubectl-secret-guard.ts
 ├── secret-guard.ts
