@@ -1,5 +1,5 @@
 import { expect, test } from "vitest"
-import { SOPS_DECRYPT } from "../extensions/sops-secret-guard.ts"
+import { SOPS_DECRYPT } from "../guards/sops-secret-guard.ts"
 
 // Keywords are obfuscated here so this source file doesn't trigger the plugin itself.
 const restore = (s: string) =>

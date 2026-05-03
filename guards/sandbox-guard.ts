@@ -2,41 +2,13 @@
  * sandbox-guard
  *
  * OS-level filesystem sandboxing for bash commands using bubblewrap (bwrap).
+ * Overrides the built-in bash tool with a sandboxed version when enabled.
  *
- * Intercepts bash tool calls and executes them inside a restricted filesystem
- * namespace where only the project directory and essential system paths are
- * visible. The agent cannot read ~/.ssh, ~/.aws, ~/.config, or any other
- * files outside the explicitly allowlisted paths.
- *
- * This is v1: pure TypeScript, shells out to bwrap. No native binary, no
- * seccomp, no shell AST parsing. Process hardening (ptrace block, core dump
- * disable, LD_PRELOAD stripping) comes in v2.
- *
- * Configuration lives in .pi/heimdall.json alongside existing command policies:
- *
- * ```json
- * {
- *   "sandbox": {
- *     "enabled": true,
- *     "networkAccess": true,
- *     "writableRoots": [".", "/tmp"],
- *     "systemPaths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
- *     "etcReal": ["/etc/resolv.conf", "/etc/hosts", "/etc/ssl", "/etc/ca-certificates"],
- *     "etcSynthetic": {
- *       "/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
- *       "/etc/group": "nogroup:x:65534:\n"
- *     },
- *     "envAllowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM", "TZ"],
- *     "extraReadPaths": [],
- *     "denyReadGlobs": []
- *   }
- * }
- * ```
+ * Config comes from the shared HeimdallConfig (loaded by the entry point).
  */
 
 import {
 	createBashTool,
-	getAgentDir,
 	type BashOperations,
 	type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
@@ -44,43 +16,14 @@ import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface SandboxConfig {
-	enabled: boolean;
-	networkAccess: boolean;
-	writableRoots: string[];
-	systemPaths: string[];
-	etcReal: string[];
-	etcSynthetic: Record<string, string>;
-	envAllowlist: string[];
-	extraReadPaths: string[];
-	denyReadGlobs: string[];
-}
-
-interface HeimdallConfig {
-	sandbox?: Partial<SandboxConfig>;
-	commandPolicies?: Array<{
-		name: string;
-		blocked: string[];
-		message: string;
-	}>;
-}
+import type { HeimdallConfig, SandboxConfig } from "./types.js";
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
 	enabled: false,
 	networkAccess: true,
 	writableRoots: [".", "/tmp"],
 	systemPaths: ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-	etcReal: [
-		"/etc/resolv.conf",
-		"/etc/hosts",
-		"/etc/ssl",
-		"/etc/ca-certificates",
-	],
+	etcReal: ["/etc/resolv.conf", "/etc/hosts", "/etc/ssl", "/etc/ca-certificates"],
 	etcSynthetic: {
 		"/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
 		"/etc/group": "nogroup:x:65534:\n",
@@ -90,52 +33,6 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
 	denyReadGlobs: [],
 };
 
-// ---------------------------------------------------------------------------
-// Config loading
-// ---------------------------------------------------------------------------
-
-function loadConfig(cwd: string): SandboxConfig {
-	const configPaths = [
-		join(getAgentDir(), "heimdall.json"),
-		join(cwd, ".pi", "heimdall.json"),
-	];
-
-	let merged: Partial<SandboxConfig> = {};
-
-	for (const configPath of configPaths) {
-		if (!existsSync(configPath)) continue;
-		try {
-			const raw = require("node:fs").readFileSync(configPath, "utf-8");
-			const parsed = JSON.parse(raw) as HeimdallConfig;
-			if (parsed.sandbox) {
-				merged = { ...merged, ...parsed.sandbox };
-			}
-		} catch {
-			// Ignore parse errors — other guards handle the same config
-		}
-	}
-
-	return { ...DEFAULT_SANDBOX_CONFIG, ...merged };
-}
-
-// ---------------------------------------------------------------------------
-// bwrap argument construction
-// ---------------------------------------------------------------------------
-
-/**
- * Build the full bwrap argv (everything after `bwrap` itself).
- *
- * Mount order:
- * 1. tmpfs /          — empty root
- * 2. --dev /dev       — minimal device nodes
- * 3. --ro-bind system — /usr, /lib, etc.
- * 4. --ro-bind /etc   — real DNS/TLS files
- * 5. --ro-bind synthetic /etc — synthetic passwd/group
- * 6. --bind writable  — project dir, /tmp
- * 7. namespace flags  — --unshare-user, --unshare-pid
- * 8. lifecycle flags  — --die-with-parent, --new-session
- * 9. -- <command>     — the user command
- */
 export function buildBwrapArgs(
 	config: SandboxConfig,
 	cwd: string,
@@ -144,27 +41,21 @@ export function buildBwrapArgs(
 ): string[] {
 	const args: string[] = [];
 
-	// 1. Empty root filesystem
 	args.push("--tmpfs", "/");
-
-	// 2. Minimal /dev
 	args.push("--dev", "/dev");
 
-	// 3. System paths (read-only)
 	for (const sysPath of config.systemPaths) {
 		if (existsSync(sysPath)) {
 			args.push("--ro-bind", sysPath, sysPath);
 		}
 	}
 
-	// 4. Real /etc files (DNS, TLS)
 	for (const etcPath of config.etcReal) {
 		if (existsSync(etcPath)) {
 			args.push("--ro-bind", etcPath, etcPath);
 		}
 	}
 
-	// 5. Synthetic /etc files
 	for (const [etcPath, content] of Object.entries(config.etcSynthetic)) {
 		const filename = etcPath.split("/").pop() ?? "synthetic";
 		const syntheticFile = join(syntheticDir, filename);
@@ -172,7 +63,6 @@ export function buildBwrapArgs(
 		args.push("--ro-bind", syntheticFile, etcPath);
 	}
 
-	// 6. Extra read paths
 	for (const readPath of config.extraReadPaths) {
 		const resolved = readPath === "." ? cwd : readPath;
 		if (existsSync(resolved)) {
@@ -180,7 +70,6 @@ export function buildBwrapArgs(
 		}
 	}
 
-	// 7. Writable roots
 	for (const root of config.writableRoots) {
 		const resolved = root === "." ? cwd : root;
 		if (existsSync(resolved)) {
@@ -188,29 +77,16 @@ export function buildBwrapArgs(
 		}
 	}
 
-	// 8. Namespace isolation
 	args.push("--unshare-user");
 	args.push("--unshare-pid");
-
-	// No --unshare-net when networkAccess is true (shared network for Docker, webfetch)
-
-	// 9. /proc
 	args.push("--proc", "/proc");
-
-	// 10. Lifecycle
 	args.push("--die-with-parent");
 	args.push("--new-session");
-
-	// 11. Command separator + user command
 	args.push("--");
 	args.push("bash", "-c", command);
 
 	return args;
 }
-
-// ---------------------------------------------------------------------------
-// Environment stripping
-// ---------------------------------------------------------------------------
 
 export function stripEnv(
 	allowlist: string[],
@@ -226,31 +102,19 @@ export function stripEnv(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
-// bwrap detection
-// ---------------------------------------------------------------------------
-
 function findBwrap(): string | null {
 	const pathEnv = process.env.PATH ?? "";
 	for (const dir of pathEnv.split(":")) {
 		const candidate = join(dir, "bwrap");
 		if (existsSync(candidate)) return candidate;
 	}
-	// Check common locations
 	for (const loc of ["/usr/bin/bwrap", "/usr/local/bin/bwrap"]) {
 		if (existsSync(loc)) return loc;
 	}
 	return null;
 }
 
-// ---------------------------------------------------------------------------
-// Sandboxed bash operations
-// ---------------------------------------------------------------------------
-
-function createSandboxedBashOps(
-	config: SandboxConfig,
-	cwd: string,
-): BashOperations {
+function createSandboxedBashOps(config: SandboxConfig, cwd: string): BashOperations {
 	return {
 		async exec(command, execCwd, { onData, signal, timeout }) {
 			const workDir = execCwd || cwd;
@@ -258,7 +122,6 @@ function createSandboxedBashOps(
 				throw new Error(`Working directory does not exist: ${workDir}`);
 			}
 
-			// Create temp dir for synthetic /etc files
 			const syntheticDir = join(
 				process.env.TMPDIR || "/tmp",
 				`heimdall-sandbox-${randomUUID()}`,
@@ -289,11 +152,7 @@ function createSandboxedBashOps(
 						timeoutHandle = setTimeout(() => {
 							timedOut = true;
 							if (child.pid) {
-								try {
-									process.kill(-child.pid, "SIGKILL");
-								} catch {
-									child.kill("SIGKILL");
-								}
+								try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
 							}
 						}, timeout * 1000);
 					}
@@ -308,11 +167,7 @@ function createSandboxedBashOps(
 
 					const onAbort = () => {
 						if (child.pid) {
-							try {
-								process.kill(-child.pid, "SIGKILL");
-							} catch {
-								child.kill("SIGKILL");
-							}
+							try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
 						}
 					};
 
@@ -332,22 +187,13 @@ function createSandboxedBashOps(
 					});
 				});
 			} finally {
-				// Cleanup synthetic files
-				try {
-					rmSync(syntheticDir, { recursive: true, force: true });
-				} catch {
-					// Best effort cleanup
-				}
+				try { rmSync(syntheticDir, { recursive: true, force: true }); } catch { /* best effort */ }
 			}
 		},
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Extension
-// ---------------------------------------------------------------------------
-
-export default function (pi: ExtensionAPI) {
+export function registerSandboxGuard(pi: ExtensionAPI, heimdallConfig: HeimdallConfig): void {
 	let sandboxConfig: SandboxConfig | null = null;
 	let bwrapAvailable = false;
 
@@ -373,7 +219,8 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const config = loadConfig(ctx.cwd);
+		const sandbox = heimdallConfig.sandbox;
+		const config: SandboxConfig = { ...DEFAULT_SANDBOX_CONFIG, ...(sandbox ?? {}) };
 		if (!config.enabled) {
 			sandboxConfig = null;
 			return;
@@ -401,7 +248,6 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.notify("heimdall sandbox: active", "info");
 	});
 
-	// Override the built-in bash tool with sandboxed version
 	const localCwd = process.cwd();
 	const localBash = createBashTool(localCwd);
 
@@ -420,7 +266,6 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Also sandbox user bash commands (! and !!)
 	pi.on("user_bash", () => {
 		if (!sandboxConfig || !bwrapAvailable) return undefined;
 		return {

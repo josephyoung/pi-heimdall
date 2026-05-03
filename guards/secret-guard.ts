@@ -3,40 +3,12 @@
  *
  * Project-scoped secret protection driven by a `.env.json` file at the project
  * root. The file is a flat object whose keys name environment variables that
- * are considered secret, e.g.:
- *
- *   {
- *     "GITHUB_TOKEN": "",
- *     "OPENAI_API_KEY": "",
- *     "STRIPE_SECRET_KEY": ""
- *   }
- *
- * For each key listed, the current process env var (if set) is captured as the
- * "secret value". Values in the JSON itself are ignored — only the keys matter.
+ * are considered secret.
  *
  * Behavior:
- *
- *   1. `tool_call` (bash): if the command references any secret key name as a
- *      whole word, the command is blocked before it runs. This catches
- *      `echo $GITHUB_TOKEN`, `env | grep OPENAI`, etc.
- *
- *   2. `tool_result` (bash): the textual output of bash is scanned and any
- *      occurrence of a captured secret value is redacted. Redaction covers:
- *        - plaintext `KEY=value`
- *        - base64 of `KEY=value` (with and without trailing newline)
- *        - rot13 of `KEY=value`
- *        - reversed `KEY=value`
- *        - raw hex of `KEY=value` (xxd -p, od -x)
- *        - hexdump-style output from `hexdump -C`, `xxd`, and `od -c`
- *      Additionally, a generic pattern redacts values after any variable
- *      whose name ends in SECRET/KEY/TOKEN/PASSWORD/PASS/APIKEY/CREDENTIAL/PRIVATE.
- *
- * The `.env.json` file itself is loaded on `session_start` (and every
- * subsequent reload) from `ctx.cwd`. If the file does not exist or cannot be
- * parsed, the guard stays active but with an empty key set — the generic
- * trailing-pattern redaction still applies to bash output.
- *
- * Ported from opencode plugin `secret-guard.ts`.
+ *   1. `tool_call` (bash): blocks commands referencing secret key names
+ *   2. `tool_result` (bash): redacts secret values from output (plaintext,
+ *      base64, rot13, reversed, hex, hexdump)
  */
 
 import {
@@ -44,9 +16,10 @@ import {
 	isBashToolResult,
 	type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { HeimdallConfig } from "./types.js";
 
 type SecretValues = Record<string, string>;
 
@@ -63,17 +36,12 @@ function rot13(input: string): string {
 	});
 }
 
-/**
- * Extract decoded text from hexdump-style output.
- * Handles three common formats: `hexdump -C`, `xxd`, and `od -c`.
- */
 function extractDecodedText(output: string): string | null {
 	const lines = output.split("\n");
 	const decoded: string[] = [];
 	let hasHexFormat = false;
 
 	for (const line of lines) {
-		// `hexdump -C`: trailing |text|
 		const pipeMatch = line.match(/\|([^|]+)\|/);
 		if (pipeMatch) {
 			hasHexFormat = true;
@@ -81,7 +49,6 @@ function extractDecodedText(output: string): string | null {
 			continue;
 		}
 
-		// `xxd`: "address: hex hex  text" or "hex hex  text"
 		const xxdMatch = line.match(
 			/^(?:[0-9a-f]+:\s+)?(?:[0-9a-f]{2,4}(?:\s+[0-9a-f]{2,4})*)\s{2,}(\S.*)$/i,
 		);
@@ -91,7 +58,6 @@ function extractDecodedText(output: string): string | null {
 			continue;
 		}
 
-		// `od -c`: address + spaced chars
 		if (/^\d+\s+/.test(line) && !line.includes("|")) {
 			const parts = line.split(/^\d+\s+/);
 			if (parts.length > 1 && parts[1] && /\S\s+\S/.test(parts[1])) {
@@ -104,7 +70,6 @@ function extractDecodedText(output: string): string | null {
 	return hasHexFormat ? decoded.join("") : null;
 }
 
-/** Check if raw hex output (e.g. `xxd -p`, `od -x`) contains any secret. */
 function containsSecretInHex(output: string, secretValues: SecretValues): boolean {
 	const lower = output.toLowerCase();
 	const stripped = lower.replace(/[^0-9a-f]/g, "");
@@ -120,9 +85,6 @@ function containsSecretInHex(output: string, secretValues: SecretValues): boolea
 }
 
 function redactOutput(output: string, secretValues: SecretValues): string {
-	// Short-circuit: if any hexdump-style line contains a captured value, nuke
-	// the whole output. Partial redaction of a hex dump is dangerous because
-	// the bytes surrounding the hit are often still enough to reconstruct it.
 	const decoded = extractDecodedText(output);
 	if (decoded) {
 		for (const [key, value] of Object.entries(secretValues)) {
@@ -135,7 +97,6 @@ function redactOutput(output: string, secretValues: SecretValues): string {
 		}
 	}
 
-	// Same treatment for raw hex output.
 	if (containsSecretInHex(output, secretValues)) {
 		return REDACTED;
 	}
@@ -146,25 +107,17 @@ function redactOutput(output: string, secretValues: SecretValues): string {
 		if (!value) continue;
 		const fullValue = `${key}=${value}`;
 
-		// Plaintext.
 		result = result.split(fullValue).join(REDACTED);
-
-		// Base64 with and without a trailing newline.
 		result = result
 			.split(Buffer.from(fullValue).toString("base64"))
 			.join(REDACTED);
 		result = result
 			.split(Buffer.from(`${fullValue}\n`).toString("base64"))
 			.join(REDACTED);
-
-		// Rot13.
 		result = result.split(rot13(fullValue)).join(REDACTED);
-
-		// Reversed.
 		result = result.split(fullValue.split("").reverse().join("")).join(REDACTED);
 	}
 
-	// Generic pattern-based redaction for common secret variable names.
 	result = result.replace(
 		/(\b\w*(?:SECRET|KEY|TOKEN|PASSWORD|PASS|APIKEY|CREDENTIAL|PRIVATE)=)\S*/gi,
 		`$1${REDACTED}`,
@@ -173,7 +126,7 @@ function redactOutput(output: string, secretValues: SecretValues): string {
 	return result;
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
 	let secretKeys: string[] = [];
 	let secretValues: SecretValues = {};
 	let keyPattern: RegExp | null = null;
@@ -209,10 +162,12 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		if (disabledSet.has("secret-guard")) return;
 		await loadEnvJson(ctx.cwd);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (disabledSet.has("secret-guard")) return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;
 		if (!keyPattern) return undefined;
 
@@ -237,10 +192,9 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_result", async (event, _ctx) => {
+		if (disabledSet.has("secret-guard")) return undefined;
 		if (!isBashToolResult(event)) return undefined;
 
-		// Nothing to redact against. Still apply generic pattern redaction
-		// so that accidental `FOO_TOKEN=abc` in output gets masked.
 		const hasValues = Object.keys(secretValues).length > 0;
 
 		let changed = false;

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBwrapArgs, stripEnv } from "../extensions/sandbox-guard";
+import { buildBwrapArgs, stripEnv } from "../guards/sandbox-guard";
 
 describe("sandbox-guard", () => {
 	describe("stripEnv", () => {

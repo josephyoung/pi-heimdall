@@ -2,23 +2,16 @@
  * env-protect
  *
  * Blocks `read` tool calls that target `.env` files.
- *
- * Allows the following variants through as example/template files:
- *   .env.example, .env.sample, .env.template, .env.dist, .env.defaults
- *
- * Everything else that looks like a dotenv file (`.env`, `.env.local`,
- * `.env.production`, `.envrc`, `service.env`, etc.) is blocked.
- *
- * Ported from opencode plugin `envprotect.ts`.
+ * Allows through example/template variants (.env.example, .env.sample, etc.)
  */
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { basename } from "node:path";
+import type { HeimdallConfig } from "./types.js";
 
 const EXAMPLE_SUFFIXES = ["example", "sample", "template", "dist", "defaults"];
 
 function isExampleVariant(name: string): boolean {
-	// `.env.example`, `.env.local.example`, etc.
 	const lower = name.toLowerCase();
 	return EXAMPLE_SUFFIXES.some(
 		(suffix) => lower.endsWith(`.${suffix}`) || lower.includes(`.${suffix}.`),
@@ -26,20 +19,19 @@ function isExampleVariant(name: string): boolean {
 }
 
 function isDotenvPath(rawPath: string): boolean {
-	// Strip any leading @ that some models like to attach to paths.
 	const path = rawPath.replace(/^@/, "");
 	const name = basename(path).toLowerCase();
 
 	if (name === ".env" || name === ".envrc") return true;
 	if (name.startsWith(".env.")) return !isExampleVariant(name);
-	// Catch `foo.env`, `service.env` etc. but not `.env.example.txt`.
 	if (name.endsWith(".env")) return !isExampleVariant(name);
 
 	return false;
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerEnvProtect(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
+		if (disabledSet.has("env-protect")) return undefined;
 		if (!isToolCallEventType("read", event)) return undefined;
 
 		const path = event.input.path;

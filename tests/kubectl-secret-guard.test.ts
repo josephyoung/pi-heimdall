@@ -1,5 +1,5 @@
 import { expect, test } from "vitest"
-import { KUBECTL_BLOCKED } from "../extensions/kubectl-secret-guard.ts"
+import { KUBECTL_BLOCKED } from "../guards/kubectl-secret-guard.ts"
 
 const blockedGetSecret = [
   "kubectl get secret",

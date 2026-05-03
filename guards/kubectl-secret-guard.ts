@@ -1,25 +1,15 @@
 /**
  * kubectl-secret-guard
  *
- * Blocks three classes of risky kubectl invocations inside the bash tool:
- *
- *   1. `kubectl get secrets` / `kubectl get secret`
- *   2. `kubectl patch ... finalizers` — bypasses Kubernetes deletion safeguards
- *   3. `kubectl exec` into a pod that would leak secrets via:
- *        - reading `app.ini`
- *        - reading anything under `/var/run/secrets`
- *        - running `env` / `printenv`
- *
- * Regex matches within a single shell segment (terminators: ; | & newline),
- * so a separate `kubectl get pods` earlier in the same script does not trip
- * the guard for an unrelated later command.
- *
- * Ported from opencode plugin `kubectl-secret-guard.ts`.
+ * Blocks risky kubectl invocations:
+ *   1. kubectl get secrets
+ *   2. kubectl patch ... finalizers
+ *   3. kubectl exec into pods accessing sensitive data
  */
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { HeimdallConfig } from "./types.js";
 
-// One segment atom: any char that is not a shell terminator, plus escaped newlines.
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 
 export const KUBECTL_BLOCKED = new RegExp(
@@ -52,8 +42,9 @@ function getBlockReason(command: string): string | null {
 	);
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerKubectlSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
+		if (disabledSet.has("kubectl-secret-guard")) return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;
 
 		const command = event.input.command;

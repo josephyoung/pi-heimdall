@@ -1,7 +1,7 @@
 {
   "name": "@casualjim/pi-heimdall",
-  "version": "0.1.10",
-  "description": "Guardian extensions for pi — blocks accidental secret exposure from bash, read, sops, and kubectl tool calls",
+"version": "0.1.10",
+  "description": "Guardian extension for pi — security guards that block accidental secret exposure, enforce command policies, protect .env files, and sandbox bash commands",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -19,6 +19,7 @@
   "type": "module",
   "files": [
     "extensions/",
+    "guards/",
     "README.md",
     "LICENSE"
   ],

@@ -60,9 +60,19 @@ jobs:
         if: ${{ steps.exists.outputs.published != 'true' }}
         run: npm publish --provenance --access public
 
-      - name: Bump patch version for next publish
+      - name: Determine bump level
         if: ${{ steps.exists.outputs.published != 'true' }}
-        run: npm version patch --no-git-tag-version
+        id: bump
+        run: |
+          if echo "${{ github.event.head_commit.message }}" | grep -q '\[minor\]'; then
+            echo "level=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "level=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version for next publish
+        if: ${{ steps.exists.outputs.published != 'true' }}
+        run: npm version ${{ steps.bump.outputs.level }} --no-git-tag-version
 
       - name: Commit version bump
         if: ${{ steps.exists.outputs.published != 'true' }}

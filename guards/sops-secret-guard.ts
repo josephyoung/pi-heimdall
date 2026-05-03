@@ -2,30 +2,12 @@
  * sops-secret-guard
  *
  * Blocks any `sops` invocation in the bash tool that decrypts content.
- *
- * Modes covered:
- *   sops decrypt <file>        — subcommand
- *   sops --decrypt / -d <file> — long/short flag
- *   sops exec-env <file> <cmd> — decrypts into environment
- *   sops exec-file <file> <cmd>— decrypts to a temp file
- *   sops edit <file>           — decrypts for editing
- *   sops <file>                — bare invocation (decrypts for editing)
- *
- * "sops as a command" means sops appears at:
- *   - start of string / after a shell terminator (; | & \n), with optional whitespace
- *   - after -- (end-of-options marker), e.g. `mise exec -- sops ...`
- *   - optionally preceded by KEY=val env assignments
- *
- * Safe subcommands pass through via a negative lookahead:
- *   encrypt/--encrypt/-e, rotate/--rotate/-r, publish, keyservice, filestatus,
- *   groups, updatekeys, set, unset, completion, help, h, --version/-v
- *
- * Ported from opencode plugin `sops-secret-guard.ts`.
+ * Covers: decrypt subcommand, --decrypt/-d flags, exec-env, exec-file, edit, bare invocation.
  */
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { HeimdallConfig } from "./types.js";
 
-// One segment atom: any char that is not a shell terminator, plus escaped newlines.
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 
 const START = "(?:(?:^|[;|&\\n])\\s*)";
@@ -40,17 +22,15 @@ const NO_SAFE_AHEAD =
 	`(?!${SEG}*(?:--version\\b|-v\\b))`;
 
 export const SOPS_DECRYPT = new RegExp(
-	// Alt 1: explicit decrypt subcommands
 	`${SOPS_CMD}${SEG}*\\b(?:decrypt|exec-env|exec-file|edit)\\b` +
-		// Alt 2: --decrypt or -d flag
 		`|${SOPS_CMD}${SEG}*(?:--decrypt\\b|-d\\b)` +
-		// Alt 3: bare invocation — no safe subcommand/flag in this segment
 		`|${SOPS_CMD}${NO_SAFE_AHEAD}`,
 	"m",
 );
 
-export default function (pi: ExtensionAPI) {
+export function registerSopsSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
+		if (disabledSet.has("sops-secret-guard")) return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;
 
 		const command = event.input.command;
