@@ -39,7 +39,7 @@ const NO_SAFE_AHEAD =
 	`(?!${SEG}*(?:--encrypt\\b|--rotate\\b|-e\\b|-r\\b))` +
 	`(?!${SEG}*(?:--version\\b|-v\\b))`;
 
-const SOPS_DECRYPT = new RegExp(
+export const SOPS_DECRYPT = new RegExp(
 	// Alt 1: explicit decrypt subcommands
 	`${SOPS_CMD}${SEG}*\\b(?:decrypt|exec-env|exec-file|edit)\\b` +
 		// Alt 2: --decrypt or -d flag

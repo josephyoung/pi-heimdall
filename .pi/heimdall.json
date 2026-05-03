@@ -1,4 +1,23 @@
 {
+  "sandbox": {
+    "enabled": true,
+    "networkAccess": true,
+    "writableRoots": [".", "/tmp"],
+    "systemPaths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
+    "etcReal": [
+      "/etc/resolv.conf",
+      "/etc/hosts",
+      "/etc/ssl",
+      "/etc/ca-certificates"
+    ],
+    "etcSynthetic": {
+      "/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
+      "/etc/group": "nogroup:x:65534:\n"
+    },
+    "envAllowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM", "TZ"],
+    "extraReadPaths": [],
+    "denyReadGlobs": []
+  },
   "commandPolicies": [
     {
       "name": "no-cargo-test",

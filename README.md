@@ -16,6 +16,7 @@ anything that would leak secrets to the LLM context.
 
 | Extension | Tool | Blocks / redacts |
 |---|---|---|
+| `sandbox-guard` | `bash` | OS-level filesystem isolation via bubblewrap — only project dir + system binaries visible, synthetic `/etc`, env var stripping |
 | `env-protect` | `read` | Reading `.env`, `.env.*`, `.envrc`, `*.env` — except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults` |
 | `kubectl-secret-guard` | `bash` | `kubectl get secrets`, `kubectl patch ... finalizers`, `kubectl exec` into a pod that dumps env / `/var/run/secrets` / `app.ini` |
 | `sops-secret-guard` | `bash` | Any `sops` invocation that would decrypt content: `sops decrypt`, `sops -d`, `sops --decrypt`, `sops exec-env`, `sops exec-file`, `sops edit`, and bare `sops <file>` |
@@ -65,6 +66,56 @@ This is useful when you want only some of the guards active.
 ```bash
 pi -e git:github.com/casualjim/pi-heimdall
 ```
+
+## Configuring `sandbox-guard`
+
+`sandbox-guard` provides OS-level filesystem isolation using bubblewrap (bwrap). It intercepts all bash tool calls and executes them inside a restricted filesystem namespace where only the project directory and essential system paths are visible. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any other files outside the explicitly allowlisted paths.
+
+**Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`, `dnf install bubblewrap`, etc.).
+
+Configuration lives in `.pi/heimdall.json`:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "networkAccess": true,
+    "writableRoots": [".", "/tmp"],
+    "systemPaths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
+    "etcReal": [
+      "/etc/resolv.conf",
+      "/etc/hosts",
+      "/etc/ssl",
+      "/etc/ca-certificates"
+    ],
+    "etcSynthetic": {
+      "/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
+      "/etc/group": "nogroup:x:65534:\n"
+    },
+    "envAllowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM", "TZ"],
+    "extraReadPaths": [],
+    "denyReadGlobs": []
+  }
+}
+```
+
+**What the agent CAN see:**
+- Project directory (read-write)
+- `/tmp` (read-write)
+- System binaries and libraries (read-only): `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin`
+- DNS and TLS (read-only): `/etc/resolv.conf`, `/etc/hosts`, `/etc/ssl`
+
+**What the agent CANNOT see:**
+- `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config` — not mounted
+- Real `/etc/passwd` — replaced with synthetic `nobody` entry
+- Real `/etc/group` — replaced with synthetic `nogroup` entry
+- Any environment variable not in the allowlist (stripped before execution)
+
+**Network:** Shared with host by default. The agent can reach Docker services on localhost and the internet. Protection comes from filesystem lockdown — the agent has nothing valuable to send.
+
+**Disable for a session:** `pi --no-sandbox`
+
+**Check status:** `/sandbox` command in the TUI
 
 ## Enabling / disabling individual guards
 

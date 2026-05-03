@@ -30,7 +30,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "check:pack": "npm pack --dry-run"
+    "check:pack": "npm pack --dry-run",
+    "test": "bun test"
   },
   "pi": {
     "extensions": [

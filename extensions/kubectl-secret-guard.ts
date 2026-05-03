@@ -22,7 +22,7 @@ import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-
 // One segment atom: any char that is not a shell terminator, plus escaped newlines.
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 
-const KUBECTL_BLOCKED = new RegExp(
+export const KUBECTL_BLOCKED = new RegExp(
 	`\\bkubectl\\b${SEG}*\\b(?:(get\\b${SEG}*\\bsecrets?\\b)|(patch\\b${SEG}*finalizers)|(exec\\b${SEG}*(?:app\\.ini|/var/run/secrets|\\bprintenv\\b|\\benv\\b)))`,
 );
 
