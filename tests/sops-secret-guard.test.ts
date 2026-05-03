@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { SOPS_DECRYPT } from "../extensions/sops-secret-guard.ts"
 
 // Keywords are obfuscated here so this source file doesn't trigger the plugin itself.

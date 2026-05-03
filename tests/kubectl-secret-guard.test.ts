@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { KUBECTL_BLOCKED } from "../extensions/kubectl-secret-guard.ts"
 
 const blockedGetSecret = [

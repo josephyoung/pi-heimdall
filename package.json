@@ -31,7 +31,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check:pack": "npm pack --dry-run",
-    "test": "bun test"
+    "test": "vitest run"
   },
   "pi": {
     "extensions": [
@@ -45,7 +45,8 @@
     "@mariozechner/pi-coding-agent": "*",
     "@types/node": "^22.0.0",
     "@types/shell-quote": "^1.7.5",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "shell-quote": "^1.8.3"
