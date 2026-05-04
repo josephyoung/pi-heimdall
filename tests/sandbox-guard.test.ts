@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBwrapArgs, filterEnv, normalizeSandboxConfig, stripEnv } from "../guards/sandbox-guard";
+import { buildBwrapArgs, filterEnv, getSandboxPathAccess, normalizeSandboxConfig, stripEnv } from "../guards/sandbox-guard";
 
 describe("sandbox-guard", () => {
 	describe("filterEnv", () => {
@@ -90,6 +90,51 @@ describe("sandbox-guard", () => {
 				{ path: "/etc/passwd", content: "synthetic" },
 			]);
 			expect(config.env.allow).toEqual(["PATH"]);
+		});
+	});
+
+	describe("getSandboxPathAccess", () => {
+		const cwd = "/repo";
+
+		it("allows reads under read prefixes", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "./docs": {} } });
+			expect(getSandboxPathAccess(config, cwd, "./docs/guide.md").access).toBe("read");
+		});
+
+		it("allows writes under write prefixes", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "./src": { mode: "write" } } });
+			expect(getSandboxPathAccess(config, cwd, "./src/main.ts").access).toBe("write");
+		});
+
+		it("lets specific read paths override writable prefixes", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				paths: {
+					".": [
+						{ mode: "write" },
+						{ path: "./.git" },
+					],
+				},
+			});
+			expect(getSandboxPathAccess(config, cwd, "./package.json").access).toBe("write");
+			expect(getSandboxPathAccess(config, cwd, "./.git").access).toBe("read");
+		});
+
+		it("marks synthetic paths so host reads can be blocked", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				paths: { "/etc": [{ path: "/etc/passwd", content: "synthetic" }] },
+			});
+			expect(getSandboxPathAccess(config, cwd, "/etc/passwd")).toEqual({
+				access: "read",
+				synthetic: true,
+				matchedPath: "/etc/passwd",
+			});
+		});
+
+		it("denies paths outside configured prefixes", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "./src": { mode: "write" } } });
+			expect(getSandboxPathAccess(config, cwd, "/home/user/.ssh/id_rsa").access).toBe("none");
 		});
 	});
 

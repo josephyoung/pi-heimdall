@@ -9,6 +9,7 @@
 
 import {
 	createBashTool,
+	isToolCallEventType,
 	type BashOperations,
 	type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
@@ -119,6 +120,66 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 function resolveSandboxPath(path: string, cwd: string): string {
 	if (path === ".") return cwd;
 	return path.startsWith("/") ? path : resolve(cwd, path);
+}
+
+function pathMatchesPrefix(path: string, prefix: string): boolean {
+	return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+export interface SandboxPathAccess {
+	access: "none" | "read" | "write";
+	synthetic: boolean;
+	matchedPath?: string;
+}
+
+export function getSandboxPathAccess(
+	config: NormalizedSandboxConfig,
+	cwd: string,
+	rawPath: string,
+): SandboxPathAccess {
+	const target = resolveSandboxPath(rawPath.replace(/^@/, ""), cwd);
+	let best: { specificity: number; order: number; access: "read" | "write"; synthetic: boolean; matchedPath: string } | null = null;
+	let order = 0;
+
+	for (const [prefix, entries] of Object.entries(config.paths)) {
+		for (const entry of entries) {
+			const entryTarget = resolveSandboxPath(entry.path ?? prefix, cwd);
+			const matches = entry.path ? target === entryTarget : pathMatchesPrefix(target, entryTarget);
+			if (!matches) {
+				order++;
+				continue;
+			}
+
+			const candidate = {
+				specificity: entryTarget.length + (entry.path ? 10_000 : 0),
+				order,
+				access: entry.mode === "write" ? "write" as const : "read" as const,
+				synthetic: entry.content !== undefined,
+				matchedPath: entryTarget,
+			};
+			if (!best || candidate.specificity > best.specificity ||
+				(candidate.specificity === best.specificity && candidate.order > best.order)) {
+				best = candidate;
+			}
+			order++;
+		}
+	}
+
+	return best
+		? { access: best.access, synthetic: best.synthetic, matchedPath: best.matchedPath }
+		: { access: "none", synthetic: false };
+}
+
+function canReadSandboxPath(config: NormalizedSandboxConfig, cwd: string, path: string): boolean {
+	const access = getSandboxPathAccess(config, cwd, path);
+	// Synthetic mounts do not exist on the host filesystem. Letting the built-in
+	// read tool read that path would expose the host file instead of sandbox content.
+	return access.access !== "none" && !access.synthetic;
+}
+
+function canWriteSandboxPath(config: NormalizedSandboxConfig, cwd: string, path: string): boolean {
+	const access = getSandboxPathAccess(config, cwd, path);
+	return access.access === "write" && !access.synthetic;
 }
 
 function isCompatibilitySymlink(path: string, mountedPrefixes: Set<string>): boolean {
@@ -343,6 +404,7 @@ function createSandboxedBashOps(config: NormalizedSandboxConfig, cwd: string): B
 
 export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => HeimdallConfig): void {
 	let sandboxConfig: NormalizedSandboxConfig | null = null;
+	let sandboxCwd = process.cwd();
 	let bwrapAvailable = false;
 
 	pi.registerFlag("no-sandbox", {
@@ -352,16 +414,19 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		sandboxCwd = ctx.cwd;
 		const noSandbox = pi.getFlag("no-sandbox") as boolean;
 		if (noSandbox) {
 			sandboxConfig = null;
+			bwrapAvailable = false;
 			ctx.ui.notify("heimdall sandbox: disabled via --no-sandbox", "warning");
 			return;
 		}
 
 		const config = normalizeSandboxConfig(getHeimdallConfig().sandbox as SandboxConfig | undefined);
+		sandboxConfig = null;
+		bwrapAvailable = false;
 		if (!config.enabled) {
-			sandboxConfig = null;
 			return;
 		}
 
@@ -407,8 +472,8 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 				return localBash.execute(id, params, signal, onUpdate);
 			}
 
-			const sandboxedBash = createBashTool(localCwd, {
-				operations: createSandboxedBashOps(sandboxConfig, localCwd),
+			const sandboxedBash = createBashTool(sandboxCwd, {
+				operations: createSandboxedBashOps(sandboxConfig, sandboxCwd),
 			});
 			return sandboxedBash.execute(id, params, signal, onUpdate);
 		},
@@ -417,8 +482,35 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 	pi.on("user_bash", () => {
 		if (!sandboxConfig || !bwrapAvailable) return undefined;
 		return {
-			operations: createSandboxedBashOps(sandboxConfig, localCwd),
+			operations: createSandboxedBashOps(sandboxConfig, sandboxCwd),
 		};
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (!sandboxConfig || !sandboxConfig.enabled) return undefined;
+
+		const block = (operation: "read" | "write", path: string) => {
+			const reason =
+				`Blocked: ${event.toolName} attempted to ${operation} "${path}" outside the heimdall sandbox path policy. ` +
+				`Use a path mounted with ${operation === "write" ? 'mode "write"' : 'read access'} in sandbox.paths, or ask the user to adjust .pi/heimdall.json.`;
+			if (ctx.hasUI) ctx.ui.notify(`heimdall sandbox: blocked ${event.toolName} ${path}`, "warning");
+			return { block: true as const, reason };
+		};
+
+		const input = event.input as Record<string, unknown>;
+		const path = typeof input.path === "string" ? input.path : ".";
+
+		if (isToolCallEventType("read", event) || event.toolName === "grep" || event.toolName === "find" || event.toolName === "ls") {
+			if (!canReadSandboxPath(sandboxConfig, sandboxCwd, path)) return block("read", path);
+			return undefined;
+		}
+
+		if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
+			if (typeof input.path !== "string") return undefined;
+			if (!canWriteSandboxPath(sandboxConfig, sandboxCwd, input.path)) return block("write", input.path);
+		}
+
+		return undefined;
 	});
 
 	pi.registerCommand("sandbox", {

@@ -69,7 +69,7 @@ pi -e git:github.com/casualjim/pi-heimdall
 
 ## Configuring `sandbox-guard`
 
-`sandbox-guard` provides OS-level filesystem isolation using bubblewrap (bwrap). It intercepts all bash tool calls and executes them inside a restricted filesystem namespace where only the project directory and essential system paths are visible. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any other files outside the explicitly allowlisted paths.
+`sandbox-guard` provides filesystem isolation for agent tools. Bash commands run inside a bubblewrap (bwrap) namespace, and built-in file tools (`read`, `write`, `edit`, `grep`, `find`, `ls`) are checked against the same path policy before execution. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any other files outside the configured sandbox paths.
 
 **Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`, `dnf install bubblewrap`, etc.).
 
@@ -116,7 +116,7 @@ Path rules:
 - An entry without `path` applies to the whole prefix.
 - An entry with `path` applies to that specific file/path under the prefix.
 - `mode` defaults to `"read"`; write access requires `"mode": "write"`.
-- `content` creates a synthetic file at `path`.
+- `content` creates a synthetic file at `path` for sandboxed bash commands. Direct host `read` of synthetic paths is blocked so it cannot expose the real host file.
 
 Default path visibility:
 
