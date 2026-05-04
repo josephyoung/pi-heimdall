@@ -211,18 +211,18 @@ export function registerSandboxGuard(pi: ExtensionAPI, heimdallConfig: HeimdallC
 			return;
 		}
 
+		const sandbox = heimdallConfig.sandbox;
+		const config: SandboxConfig = { ...DEFAULT_SANDBOX_CONFIG, ...(sandbox ?? {}) };
+		if (!config.enabled) {
+			sandboxConfig = null;
+			return;
+		}
+
 		if (process.platform !== "linux") {
 			ctx.ui.notify(
 				`heimdall sandbox: not supported on ${process.platform} (Linux only)`,
 				"warning",
 			);
-			return;
-		}
-
-		const sandbox = heimdallConfig.sandbox;
-		const config: SandboxConfig = { ...DEFAULT_SANDBOX_CONFIG, ...(sandbox ?? {}) };
-		if (!config.enabled) {
-			sandboxConfig = null;
 			return;
 		}
 
