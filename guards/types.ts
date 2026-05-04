@@ -13,15 +13,29 @@ export interface CommandPolicy {
 }
 
 export interface SandboxConfig {
+	enabled?: boolean;
+	network?: "host" | "none";
+	paths?: Record<string, SandboxPathEntry | SandboxPathEntry[]>;
+	env?: {
+		allow?: string[] | null;
+		deny?: string[] | null;
+	};
+}
+
+export interface SandboxPathEntry {
+	path?: string;
+	content?: string;
+	mode?: "read" | "write";
+}
+
+export interface NormalizedSandboxConfig {
 	enabled: boolean;
-	networkAccess: boolean;
-	writableRoots: string[];
-	systemPaths: string[];
-	etcReal: string[];
-	etcSynthetic: Record<string, string>;
-	envAllowlist: string[];
-	extraReadPaths: string[];
-	denyReadGlobs: string[];
+	network: "host" | "none";
+	paths: Record<string, SandboxPathEntry[]>;
+	env: {
+		allow: string[] | null;
+		deny: string[] | null;
+	};
 }
 
 /** Guards that can be disabled via the `disabled` array in heimdall.json. */

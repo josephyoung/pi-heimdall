@@ -112,8 +112,8 @@ export default function heimdall(pi: ExtensionAPI) {
 		ctx.ui.notify(`heimdall: ${active} guards active${disabled}`, "info");
 	});
 
-	// Always-on
-	registerSandboxGuard(pi, config);
+	// Always registered, but runtime behavior follows current loaded config.
+	registerSandboxGuard(pi, () => config);
 
 	// Opt-out guards
 	registerSecretGuard(pi, config, disabledSet);

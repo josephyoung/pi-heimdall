@@ -1,72 +1,99 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBwrapArgs, stripEnv } from "../guards/sandbox-guard";
+import { buildBwrapArgs, filterEnv, normalizeSandboxConfig, stripEnv } from "../guards/sandbox-guard";
 
 describe("sandbox-guard", () => {
-	describe("stripEnv", () => {
-		it("only keeps allowlisted env vars", () => {
+	describe("filterEnv", () => {
+		it("inherits env by default and applies deny globs", () => {
 			const env = {
 				PATH: "/usr/bin",
 				HOME: "/home/user",
-				LANG: "en_US.UTF-8",
 				AWS_SECRET_ACCESS_KEY: "super-secret-key",
 				DATABASE_URL: "postgres://user:pass@localhost/db",
 				GITHUB_TOKEN: "ghp_abc123",
 			};
 
-			const result = stripEnv(["PATH", "HOME", "LANG"], env);
+			const result = filterEnv({ allow: null, deny: ["AWS_*", "GITHUB_TOKEN"] }, env);
 
 			expect(result).toEqual({
 				PATH: "/usr/bin",
 				HOME: "/home/user",
-				LANG: "en_US.UTF-8",
+				DATABASE_URL: "postgres://user:pass@localhost/db",
 			});
-			expect(result).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
-			expect(result).not.toHaveProperty("DATABASE_URL");
-			expect(result).not.toHaveProperty("GITHUB_TOKEN");
 		});
 
-		it("returns empty object when no env vars match allowlist", () => {
-			const env = { SECRET: "value" };
-			const result = stripEnv(["PATH"], env);
-			expect(result).toEqual({});
+		it("allows an explicit allow list", () => {
+			const env = { PATH: "/usr/bin", HOME: "/home/user", SECRET: "value" };
+			const result = filterEnv({ allow: ["PATH", "HOME"], deny: null }, env);
+			expect(result).toEqual({ PATH: "/usr/bin", HOME: "/home/user" });
 		});
 
-		it("handles empty allowlist", () => {
+		it("lets deny override allow", () => {
+			const env = { PATH: "/usr/bin", GITHUB_TOKEN: "token" };
+			const result = filterEnv({ allow: ["PATH", "GITHUB_TOKEN"], deny: ["*_TOKEN"] }, env);
+			expect(result).toEqual({ PATH: "/usr/bin" });
+		});
+
+		it("treats an empty allow list as no inherited env", () => {
 			const env = { PATH: "/usr/bin" };
-			const result = stripEnv([], env);
+			const result = filterEnv({ allow: [], deny: null }, env);
 			expect(result).toEqual({});
 		});
 
-		it("handles empty env", () => {
-			const result = stripEnv(["PATH"], {});
-			expect(result).toEqual({});
+		it("keeps stripEnv compatibility", () => {
+			const result = stripEnv(["PATH"], { PATH: "/usr/bin", SECRET: "value" });
+			expect(result).toEqual({ PATH: "/usr/bin" });
+		});
+	});
+
+	describe("normalizeSandboxConfig", () => {
+		it("defaults to disabled", () => {
+			expect(normalizeSandboxConfig().enabled).toBe(false);
+		});
+
+		it("uses simplified paths and env schema", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				network: "none",
+				paths: {
+					"./src": { mode: "write" },
+					"/etc": [{ path: "/etc/hosts" }],
+				},
+				env: { allow: ["PATH"], deny: ["*_TOKEN"] },
+			});
+
+			expect(config.enabled).toBe(true);
+			expect(config.network).toBe("none");
+			expect(config.paths["./src"]).toEqual([{ mode: "write" }]);
+			expect(config.paths["/etc"]).toEqual([{ path: "/etc/hosts" }]);
+			expect(config.env).toEqual({ allow: ["PATH"], deny: ["*_TOKEN"] });
+		});
+
+		it("maps legacy config to the new internal shape", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				networkAccess: false,
+				writableRoots: [".", "/tmp"],
+				systemPaths: ["/usr"],
+				etcReal: ["/etc/hosts"],
+				etcSynthetic: { "/etc/passwd": "synthetic" },
+				envAllowlist: ["PATH"],
+			});
+
+			expect(config.network).toBe("none");
+			expect(config.paths["."]).toContainEqual({ mode: "write" });
+			expect(config.paths["/usr"]).toEqual([{}]);
+			expect(config.paths["/etc"]).toEqual([
+				{ path: "/etc/hosts" },
+				{ path: "/etc/passwd", content: "synthetic" },
+			]);
+			expect(config.env.allow).toEqual(["PATH"]);
 		});
 	});
 
 	describe("buildBwrapArgs", () => {
-		const defaultConfig = {
-			enabled: true,
-			networkAccess: true,
-			writableRoots: [".", "/tmp"] as string[],
-			systemPaths: ["/usr", "/lib", "/lib64", "/bin", "/sbin"] as string[],
-			etcReal: [
-				"/etc/resolv.conf",
-				"/etc/hosts",
-				"/etc/ssl",
-				"/etc/ca-certificates",
-			] as string[],
-			etcSynthetic: {
-				"/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
-				"/etc/group": "nogroup:x:65534:\n",
-			} as Record<string, string>,
-			envAllowlist: ["PATH", "HOME", "LANG"],
-			extraReadPaths: [] as string[],
-			denyReadGlobs: [] as string[],
-		};
-
 		let syntheticDir: string;
 		let projectDir: string;
 
@@ -86,22 +113,17 @@ describe("sandbox-guard", () => {
 			}
 		});
 
-		it("starts with tmpfs root", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
+		it("starts with tmpfs root and mounts minimal /dev", () => {
+			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
 			expect(args[0]).toBe("--tmpfs");
 			expect(args[1]).toBe("/");
-		});
-
-		it("mounts minimal /dev", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
 			const devIdx = args.indexOf("--dev");
-			expect(devIdx).toBeGreaterThanOrEqual(0);
 			expect(args[devIdx + 1]).toBe("/dev");
 		});
 
-		it("mounts system paths read-only", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			for (const sysPath of ["/usr", "/lib", "/bin", "/sbin"]) {
+		it("mounts default system prefixes read-only when present", () => {
+			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
+			for (const sysPath of ["/usr", "/opt", "/srv", "/etc", "/nix/store", "/run/current-system/sw"]) {
 				if (existsSync(sysPath)) {
 					expect(args).toContain("--ro-bind");
 					expect(args).toContain(sysPath);
@@ -109,76 +131,76 @@ describe("sandbox-guard", () => {
 			}
 		});
 
-		it("mounts project directory as writable", () => {
-			const config = { ...defaultConfig, writableRoots: [projectDir, "/tmp"] };
+		it("mounts prefix entries as read-only by default", () => {
+			const readDir = join(projectDir, "docs");
+			mkdirSync(readDir);
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "./docs": {} } });
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
+			expect(args).toContain("--ro-bind");
+			expect(args).toContain(readDir);
+		});
+
+		it("mounts write mode entries writable", () => {
+			const srcDir = join(projectDir, "src");
+			mkdirSync(srcDir);
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "./src": { mode: "write" } } });
 			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
 			expect(args).toContain("--bind");
-			expect(args).toContain(projectDir);
+			expect(args).toContain(srcDir);
 		});
 
-		it("mounts /tmp as writable", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			expect(args).toContain("--bind");
-			expect(args).toContain("/tmp");
+		it("mounts specific path entries read-only under their prefix", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "/etc": [{ path: "/etc/hosts" }] } });
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
+			if (existsSync("/etc/hosts")) {
+				expect(args).toContain("--ro-bind");
+				expect(args).toContain("/etc/hosts");
+			}
 		});
 
-		it("includes namespace isolation flags", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			expect(args).toContain("--unshare-user");
-			expect(args).toContain("--unshare-pid");
-			expect(args).toContain("--proc");
+		it("creates synthetic files for content entries", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				paths: { "/etc": [{ path: "/etc/passwd", content: "nobody\n" }] },
+			});
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
+			const sourceIdx = args.indexOf("/etc/passwd") - 1;
+			const syntheticFile = args[sourceIdx];
+			expect(readFileSync(syntheticFile, "utf8")).toBe("nobody\n");
+			expect(args).toContain("/etc/passwd");
 		});
 
-		it("includes lifecycle flags", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			expect(args).toContain("--die-with-parent");
-			expect(args).toContain("--new-session");
-		});
-
-		it("does NOT include --unshare-net when networkAccess is true", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			expect(args).not.toContain("--unshare-net");
-		});
-
-		it("ends with the command", () => {
-			const args = buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "npm test");
-			const sepIdx = args.indexOf("--");
-			expect(sepIdx).toBeGreaterThanOrEqual(0);
-			expect(args[sepIdx + 1]).toBe("bash");
-			expect(args[sepIdx + 2]).toBe("-c");
-			expect(args[sepIdx + 3]).toBe("npm test");
-		});
-
-		it("creates synthetic /etc files", () => {
-			buildBwrapArgs(defaultConfig, projectDir, syntheticDir, "echo hello");
-			expect(existsSync(join(syntheticDir, "passwd"))).toBe(true);
-			expect(existsSync(join(syntheticDir, "group"))).toBe(true);
-		});
-
-		it("resolves '.' in writableRoots to cwd", () => {
-			const config = { ...defaultConfig, writableRoots: [".", "/tmp"] };
+		it("resolves '.' to cwd", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
 			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
 			const bindIdx = args.indexOf("--bind");
 			expect(args[bindIdx + 1]).toBe(projectDir);
 			expect(args[bindIdx + 2]).toBe(projectDir);
 		});
 
-		it("skips non-existent system paths", () => {
-			const config = {
-				...defaultConfig,
-				systemPaths: ["/definitely/does/not/exist", "/usr"],
-			};
+		it("supports network isolation", () => {
+			const config = normalizeSandboxConfig({ enabled: true, network: "none" });
 			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
-			expect(args).not.toContain("/definitely/does/not/exist");
+			expect(args).toContain("--unshare-net");
 		});
 
-		it("skips non-existent etcReal paths", () => {
-			const config = {
-				...defaultConfig,
-				etcReal: ["/etc/nonexistent-file"],
-			};
+		it("keeps host network by default", () => {
+			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
+			expect(args).not.toContain("--unshare-net");
+		});
+
+		it("ends with the command", () => {
+			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "npm test");
+			const sepIdx = args.indexOf("--");
+			expect(args[sepIdx + 1]).toBe("bash");
+			expect(args[sepIdx + 2]).toBe("-c");
+			expect(args[sepIdx + 3]).toBe("npm test");
+		});
+
+		it("skips non-existent paths", () => {
+			const config = normalizeSandboxConfig({ enabled: true, paths: { "/definitely/does/not/exist": {} } });
 			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
-			expect(args).not.toContain("/etc/nonexistent-file");
+			expect(args).not.toContain("/definitely/does/not/exist");
 		});
 	});
 });

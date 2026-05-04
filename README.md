@@ -73,45 +73,66 @@ pi -e git:github.com/casualjim/pi-heimdall
 
 **Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`, `dnf install bubblewrap`, etc.).
 
-Configuration lives in `.pi/heimdall.json`:
+Configuration lives in `.pi/heimdall.json`. The minimal config is:
+
+```json
+{
+  "sandbox": {
+    "enabled": true
+  }
+}
+```
+
+Advanced config uses one `paths` object and one `env` object:
 
 ```json
 {
   "sandbox": {
     "enabled": true,
-    "networkAccess": true,
-    "writableRoots": [".", "/tmp"],
-    "systemPaths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-    "etcReal": [
-      "/etc/resolv.conf",
-      "/etc/hosts",
-      "/etc/ssl",
-      "/etc/ca-certificates"
-    ],
-    "etcSynthetic": {
-      "/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
-      "/etc/group": "nogroup:x:65534:\n"
+    "network": "host",
+    "paths": {
+      "./src": { "mode": "write" },
+      "/etc": [
+        { "path": "/etc/resolv.conf" },
+        { "path": "/etc/hosts" },
+        {
+          "path": "/etc/passwd",
+          "content": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n"
+        }
+      ]
     },
-    "envAllowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM", "TZ"],
-    "extraReadPaths": [],
-    "denyReadGlobs": []
+    "env": {
+      "allow": null,
+      "deny": ["*_TOKEN", "*_SECRET", "*_PASSWORD", "AWS_*", "GITHUB_TOKEN"]
+    }
   }
 }
 ```
 
-**What the agent CAN see:**
-- Project directory (read-write)
+Path rules:
+
+- `paths` keys are prefixes.
+- A value can be one entry or an array of entries.
+- An entry without `path` applies to the whole prefix.
+- An entry with `path` applies to that specific file/path under the prefix.
+- `mode` defaults to `"read"`; write access requires `"mode": "write"`.
+- `content` creates a synthetic file at `path`.
+
+Default path visibility:
+
+- Project directory `.` (read-write)
 - `/tmp` (read-write)
-- System binaries and libraries (read-only): `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin`
-- DNS and TLS (read-only): `/etc/resolv.conf`, `/etc/hosts`, `/etc/ssl`
+- Read-only system prefixes when present: `/usr`, `/opt`, `/srv`, `/etc`, `/nix/store`, `/run/current-system/sw`
+- Legacy/non-usr-merged compatibility prefixes when needed: `/bin`, `/sbin`, `/lib`, `/lib64`
 
-**What the agent CANNOT see:**
-- `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config` — not mounted
-- Real `/etc/passwd` — replaced with synthetic `nobody` entry
-- Real `/etc/group` — replaced with synthetic `nogroup` entry
-- Any environment variable not in the allowlist (stripped before execution)
+Environment rules:
 
-**Network:** Shared with host by default. The agent can reach Docker services on localhost and the internet. Protection comes from filesystem lockdown — the agent has nothing valuable to send.
+- `env.allow` omitted or `null` inherits the current environment.
+- `env.allow: []` starts with no environment variables.
+- `env.deny` removes matching variables and overrides `allow`.
+- Exact names and `*` globs are supported.
+
+**Network:** Shared with host by default (`"host"`). Use `"network": "none"` to isolate the network namespace.
 
 **Disable for a session:** `pi --no-sandbox`
 
