@@ -452,11 +452,17 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 
 		const entries = Object.values(config.paths).flat();
 		const writeCount = entries.filter((entry) => entry.mode === "write").length;
-		const envSummary = config.env.allow === null ? "inherited" : `${config.env.allow.length} allowed`;
-		const network = config.network === "host" ? "shared" : "isolated";
+		const envIcon = config.env.allow === null ? "E∞" : `E${config.env.allow.length}`;
+		const networkIcon = config.network === "host" ? "↔" : "⊘";
+		const theme = ctx.ui.theme;
 		ctx.ui.setStatus(
 			"heimdall-sandbox",
-			`🔒 sandbox: ${writeCount} writable, env ${envSummary}, network ${network}`,
+			[
+				theme.fg("accent", "🛡"),
+				theme.fg("success", `✎${writeCount}`),
+				theme.fg("muted", envIcon),
+				theme.fg(config.network === "host" ? "success" : "warning", networkIcon),
+			].join(theme.fg("dim", "│")),
 		);
 		ctx.ui.notify("heimdall sandbox: active", "info");
 	});
