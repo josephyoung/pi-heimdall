@@ -19,6 +19,7 @@ export interface SandboxConfig {
 	env?: {
 		allow?: string[] | null;
 		deny?: string[] | null;
+		set?: Record<string, string | null>;
 	};
 }
 
@@ -35,6 +36,7 @@ export interface NormalizedSandboxConfig {
 	env: {
 		allow: string[] | null;
 		deny: string[] | null;
+		set: Record<string, string | null>;
 	};
 }
 

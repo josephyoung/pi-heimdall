@@ -103,7 +103,12 @@ Advanced config uses one `paths` object and one `env` object:
     },
     "env": {
       "allow": null,
-      "deny": ["*_TOKEN", "*_SECRET", "*_PASSWORD", "AWS_*", "GITHUB_TOKEN"]
+      "deny": ["*_TOKEN", "*_SECRET", "*_PASSWORD", "AWS_*", "GITHUB_TOKEN"],
+      "set": {
+        "PATH": "/usr/bin:/bin",
+        "NO_COLOR": "1",
+        "AWS_PROFILE": null
+      }
     }
   }
 }
@@ -130,7 +135,8 @@ Environment rules:
 - `env.allow` omitted or `null` inherits the current environment.
 - `env.allow: []` starts with no environment variables.
 - `env.deny` removes matching variables and overrides `allow`.
-- Exact names and `*` globs are supported.
+- `env.set` is applied last. String values set/override variables; `null` unsets them.
+- Exact names and `*` globs are supported for `allow` and `deny`.
 
 **Network:** Shared with host by default (`"host"`). Use `"network": "none"` to isolate the network namespace.
 

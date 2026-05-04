@@ -38,8 +38,25 @@ describe("sandbox-guard", () => {
 
 		it("treats an empty allow list as no inherited env", () => {
 			const env = { PATH: "/usr/bin" };
-			const result = filterEnv({ allow: [], deny: null }, env);
+			const result = filterEnv({ allow: [], deny: null, set: {} }, env);
 			expect(result).toEqual({});
+		});
+
+		it("applies set overrides after allow and deny", () => {
+			const env = { PATH: "/usr/bin", GITHUB_TOKEN: "token", HOME: "/home/user" };
+			const result = filterEnv({
+				allow: ["PATH", "GITHUB_TOKEN", "HOME"],
+				deny: ["*_TOKEN"],
+				set: {
+					PATH: "/custom/bin:/usr/bin",
+					GITHUB_TOKEN: "explicit",
+					HOME: null,
+				},
+			}, env);
+			expect(result).toEqual({
+				PATH: "/custom/bin:/usr/bin",
+				GITHUB_TOKEN: "explicit",
+			});
 		});
 
 		it("keeps stripEnv compatibility", () => {
@@ -68,7 +85,7 @@ describe("sandbox-guard", () => {
 			expect(config.network).toBe("none");
 			expect(config.paths["./src"]).toEqual([{ mode: "write" }]);
 			expect(config.paths["/etc"]).toEqual([{ path: "/etc/hosts" }]);
-			expect(config.env).toEqual({ allow: ["PATH"], deny: ["*_TOKEN"] });
+			expect(config.env).toEqual({ allow: ["PATH"], deny: ["*_TOKEN"], set: {} });
 		});
 
 		it("maps legacy config to the new internal shape", () => {

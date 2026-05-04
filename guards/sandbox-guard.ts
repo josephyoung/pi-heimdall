@@ -47,6 +47,7 @@ const DEFAULT_SANDBOX_CONFIG: NormalizedSandboxConfig = {
 	env: {
 		allow: null,
 		deny: DEFAULT_ENV_DENY,
+		set: {},
 	},
 };
 
@@ -113,6 +114,7 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 		env: {
 			allow: envAllow === undefined ? DEFAULT_SANDBOX_CONFIG.env.allow : envAllow,
 			deny: sandbox.env?.deny === undefined ? DEFAULT_SANDBOX_CONFIG.env.deny : sandbox.env.deny,
+			set: sandbox.env?.set === undefined ? DEFAULT_SANDBOX_CONFIG.env.set : sandbox.env.set,
 		},
 	};
 }
@@ -300,15 +302,23 @@ export function filterEnv(
 		if (allowed && !denied) result[key] = value;
 	}
 
+	for (const [key, value] of Object.entries(envConfig.set ?? {})) {
+		if (value === null) {
+			delete result[key];
+		} else {
+			result[key] = value;
+		}
+	}
+
 	return result;
 }
 
-/** @deprecated use filterEnv({ allow, deny }, env). */
+/** @deprecated use filterEnv({ allow, deny, set }, env). */
 export function stripEnv(
 	allowlist: string[],
 	currentEnv: Record<string, string>,
 ): Record<string, string> {
-	return filterEnv({ allow: allowlist, deny: null }, currentEnv);
+	return filterEnv({ allow: allowlist, deny: null, set: {} }, currentEnv);
 }
 
 function findBwrap(): string | null {
