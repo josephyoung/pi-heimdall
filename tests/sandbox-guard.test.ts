@@ -70,6 +70,55 @@ describe("sandbox-guard", () => {
 			expect(normalizeSandboxConfig().enabled).toBe(false);
 		});
 
+		it("denies sensitive home paths by default", () => {
+			const previousHome = process.env.HOME;
+			process.env.HOME = "/home/user";
+
+			try {
+				const config = normalizeSandboxConfig({ enabled: true });
+				const privatePaths = [
+					"/home/user/Private",
+					"/home/user/.ssh",
+					"/home/user/.config",
+					"/home/user/.aws",
+					"/home/user/.azure",
+					"/home/user/.gcloud",
+					"/home/user/.oci",
+					"/home/user/.kube",
+					"/home/user/.docker",
+					"/home/user/.gnupg",
+					"/home/user/.sops",
+					"/home/user/.age",
+					"/home/user/.password-store",
+					"/home/user/.terraform.d",
+					"/home/user/.vault-token",
+					"/home/user/.netrc",
+					"/home/user/.npmrc",
+					"/home/user/.pypirc",
+					"/home/user/.cargo/credentials",
+					"/home/user/.cargo/credentials.toml",
+					"/home/user/.claude",
+					"/home/user/.codex",
+					"/home/user/.forge",
+					"/home/user/.cursor",
+					"/home/user/.windsurf",
+					"/home/user/.openai",
+					"/home/user/.anthropic",
+				];
+
+				for (const path of privatePaths) {
+					expect(config.paths[path]).toEqual([{ mode: "deny" }]);
+					expect(getSandboxPathAccess(config, "/repo", `${path}/secret`).access).toBe("none");
+				}
+			} finally {
+				if (previousHome === undefined) {
+					delete process.env.HOME;
+				} else {
+					process.env.HOME = previousHome;
+				}
+			}
+		});
+
 		it("uses simplified paths and env schema", () => {
 			const config = normalizeSandboxConfig({
 				enabled: true,

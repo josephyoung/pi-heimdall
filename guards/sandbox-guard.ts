@@ -21,10 +21,45 @@ import type { HeimdallConfig, NormalizedSandboxConfig, SandboxConfig, SandboxPat
 
 const DEFAULT_ENV_DENY = ["*_TOKEN", "*_SECRET", "*_PASSWORD", "*_KEY"];
 
+const DEFAULT_PRIVATE_PATHS = [
+	"~/Private",
+	"~/.ssh",
+	"~/.config",
+	"~/.aws",
+	"~/.azure",
+	"~/.gcloud",
+	"~/.oci",
+	"~/.kube",
+	"~/.docker",
+	"~/.gnupg",
+	"~/.sops",
+	"~/.age",
+	"~/.password-store",
+	"~/.terraform.d",
+	"~/.vault-token",
+	"~/.netrc",
+	"~/.npmrc",
+	"~/.pypirc",
+	"~/.cargo/credentials",
+	"~/.cargo/credentials.toml",
+	"~/.claude",
+	"~/.codex",
+	"~/.forge",
+	"~/.cursor",
+	"~/.windsurf",
+	"~/.openai",
+	"~/.anthropic",
+];
+
+const DEFAULT_PRIVATE_PATH_DENIES = Object.fromEntries(
+	DEFAULT_PRIVATE_PATHS.map((path) => [path, { mode: "deny" } satisfies SandboxPathEntry]),
+) as Record<string, SandboxPathEntry>;
+
 const DEFAULT_PATHS: Record<string, SandboxPathEntry | SandboxPathEntry[]> = {
 	".": { mode: "write" },
 	"/tmp": { mode: "write" },
 	"~/.pi": { mode: "write" },
+	...DEFAULT_PRIVATE_PATH_DENIES,
 
 	"/usr": {},
 	"/opt": {},

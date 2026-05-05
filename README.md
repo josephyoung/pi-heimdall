@@ -80,10 +80,11 @@ All guards are enabled by default. Disable individual opt-out guards via the
 `sandbox-guard` provides filesystem isolation for agent tools. Bash commands
 run inside a bubblewrap (bwrap) namespace, and built-in file tools (`read`,
 `write`, `edit`, `grep`, `find`, `ls`) are checked against the same path policy
-before execution. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any
-other files outside the configured sandbox paths — except `$HOME`, which is
-mounted read-only by default so users can reference config files from their home
-directory.
+before execution. The agent cannot read default private home paths such as
+`~/Private`, `~/.ssh`, `~/.kube`, `~/.aws`, `~/.config`, tool credentials, or
+cloud config directories unless users explicitly opt them in. Other files under
+`$HOME` are mounted read-only by default so users can reference non-sensitive
+home config files.
 
 **Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`,
 `dnf install bubblewrap`, etc.).
@@ -168,6 +169,13 @@ Deny example:
 | `.` (project dir) | read-write | |
 | `/tmp` | read-write | |
 | `~/.pi` | read-write | User's pi config directory. Uses `~` expansion to `$HOME/.pi`. |
+| `~/Private` | denied | User-private files. Exact user/project rules can override. |
+| `~/.ssh`, `~/.gnupg`, `~/.netrc` | denied | Auth keys and credential files. |
+| `~/.aws`, `~/.azure`, `~/.gcloud`, `~/.oci`, `~/.kube` | denied | Cloud and Kubernetes credentials/config. |
+| `~/.docker`, `~/.terraform.d`, `~/.vault-token` | denied | Infrastructure credentials/config. |
+| `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials`, `~/.cargo/credentials.toml` | denied | Package registry credentials. |
+| `~/.sops`, `~/.age`, `~/.password-store` | denied | Secret stores and encryption keys. |
+| `~/.claude`, `~/.codex`, `~/.forge`, `~/.cursor`, `~/.windsurf`, `~/.openai`, `~/.anthropic` | denied | AI tool config and credentials. |
 | `$HOME` | read-only | Added automatically. User/project config can override. |
 | `/usr` | read-only | System binaries |
 | `/opt` | read-only | |
