@@ -21,3 +21,5 @@ dist/
 
 # Pi project-local packages (if using pi install -l)
 .pi/npm/
+SANDBOX-PLAN.md
+research_codex-sandbox-architecture_20260503.md

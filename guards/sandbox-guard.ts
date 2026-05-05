@@ -19,11 +19,12 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { HeimdallConfig, NormalizedSandboxConfig, SandboxConfig, SandboxPathEntry } from "./types.js";
 
-const DEFAULT_ENV_DENY = ["*_TOKEN", "*_SECRET", "*_PASSWORD", "AWS_*", "GITHUB_TOKEN"];
+const DEFAULT_ENV_DENY = ["*_TOKEN", "*_SECRET", "*_PASSWORD", "*_KEY"];
 
 const DEFAULT_PATHS: Record<string, SandboxPathEntry | SandboxPathEntry[]> = {
 	".": { mode: "write" },
 	"/tmp": { mode: "write" },
+	"~/.pi": { mode: "write" },
 
 	"/usr": {},
 	"/opt": {},
@@ -37,7 +38,7 @@ const DEFAULT_PATHS: Record<string, SandboxPathEntry | SandboxPathEntry[]> = {
 	"/bin": {},
 	"/sbin": {},
 	"/lib": {},
-	"/lib64": {},
+	"/lib64": {}
 };
 
 const DEFAULT_SANDBOX_CONFIG: NormalizedSandboxConfig = {
@@ -104,13 +105,22 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 		? arrayOfStrings(legacy.envAllowlist)
 		: sandbox.env?.allow;
 
+	const mergedPaths = expandPathKeys({
+		...DEFAULT_SANDBOX_CONFIG.paths,
+		...normalizePaths(paths),
+	});
+
+	// Add HOME as read-only by default so users can reference config files
+	// and provide deny rules. User/project config can override with { mode: "write" }.
+	const homeDir = process.env.HOME;
+	if (homeDir && !(homeDir in mergedPaths)) {
+		mergedPaths[homeDir] = [{}];
+	}
+
 	return {
 		enabled: sandbox.enabled ?? DEFAULT_SANDBOX_CONFIG.enabled,
 		network: sandbox.network ?? (legacy?.networkAccess === false ? "none" : DEFAULT_SANDBOX_CONFIG.network),
-		paths: {
-			...DEFAULT_SANDBOX_CONFIG.paths,
-			...normalizePaths(paths),
-		},
+		paths: mergedPaths,
 		env: {
 			allow: envAllow === undefined ? DEFAULT_SANDBOX_CONFIG.env.allow : envAllow,
 			deny: sandbox.env?.deny === undefined ? DEFAULT_SANDBOX_CONFIG.env.deny : sandbox.env.deny,
@@ -119,9 +129,29 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 	};
 }
 
+/** Resolve ~ and $VAR/${VAR} references in path strings. */
+function expandPath(path: string): string {
+	if (path.startsWith("~")) {
+		if (path === "~" || path.startsWith("~/")) {
+			const home = process.env.HOME;
+			if (home) return home + path.slice(1);
+		}
+	}
+	return path.replace(/\$\{?(\w+)\}?/g, (_m, name: string) => process.env[name] ?? "");
+}
+
+function expandPathKeys<T extends SandboxPathEntry>(paths: Record<string, T[]>): Record<string, T[]> {
+	const result: Record<string, T[]> = {};
+	for (const [key, entries] of Object.entries(paths)) {
+		result[expandPath(key)] = entries;
+	}
+	return result;
+}
+
 function resolveSandboxPath(path: string, cwd: string): string {
-	if (path === ".") return cwd;
-	return path.startsWith("/") ? path : resolve(cwd, path);
+	const expanded = expandPath(path);
+	if (expanded === ".") return cwd;
+	return expanded.startsWith("/") ? expanded : resolve(cwd, expanded);
 }
 
 function pathMatchesPrefix(path: string, prefix: string): boolean {
@@ -140,7 +170,7 @@ export function getSandboxPathAccess(
 	rawPath: string,
 ): SandboxPathAccess {
 	const target = resolveSandboxPath(rawPath.replace(/^@/, ""), cwd);
-	let best: { specificity: number; order: number; access: "read" | "write"; synthetic: boolean; matchedPath: string } | null = null;
+	let best: { specificity: number; order: number; access: "none" | "read" | "write"; synthetic: boolean; matchedPath: string } | null = null;
 	let order = 0;
 
 	for (const [prefix, entries] of Object.entries(config.paths)) {
@@ -155,7 +185,7 @@ export function getSandboxPathAccess(
 			const candidate = {
 				specificity: entryTarget.length + (entry.path ? 10_000 : 0),
 				order,
-				access: entry.mode === "write" ? "write" as const : "read" as const,
+				access: entry.mode === "write" ? "write" as const : entry.mode === "deny" ? "none" as const : "read" as const,
 				synthetic: entry.content !== undefined,
 				matchedPath: entryTarget,
 			};
@@ -226,7 +256,7 @@ export function buildBwrapArgs(
 				continue;
 			}
 
-			if (!existsSync(target)) continue;
+			if (entry.mode === "deny" || !existsSync(target)) continue;
 
 			if (entry.mode === "write") {
 				writeMounts.push(target);

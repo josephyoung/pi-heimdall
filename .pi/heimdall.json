@@ -1,32 +1,32 @@
 {
   "sandbox": {
     "enabled": true,
-    "networkAccess": true,
-    "writableRoots": [".", "/tmp"],
-    "systemPaths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-    "etcReal": [
-      "/etc/resolv.conf",
-      "/etc/hosts",
-      "/etc/ssl",
-      "/etc/ca-certificates"
-    ],
-    "etcSynthetic": {
-      "/etc/passwd": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n",
-      "/etc/group": "nogroup:x:65534:\n"
-    },
-    "envAllowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM", "TZ"],
-    "extraReadPaths": [],
-    "denyReadGlobs": []
+    "network": "host",
+    "paths": {},
+    "env": {
+      "deny": [
+        "*_TOKEN",
+        "*_SECRET",
+        "*_PASSWORD",
+        "*_KEY"
+      ]
+    }
   },
   "commandPolicies": [
     {
       "name": "no-cargo-test",
-      "blocked": ["cargo", "test"],
+      "blocked": [
+        "cargo",
+        "test"
+      ],
       "message": "Use `mise test` or `mise run test` instead of `cargo test`."
     },
     {
       "name": "no-cargo-nextest",
-      "blocked": ["cargo", "nextest"],
+      "blocked": [
+        "cargo",
+        "nextest"
+      ],
       "message": "Use `mise test` or `mise run --force test` instead of `cargo nextest`."
     }
   ]

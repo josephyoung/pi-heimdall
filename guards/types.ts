@@ -26,7 +26,7 @@ export interface SandboxConfig {
 export interface SandboxPathEntry {
 	path?: string;
 	content?: string;
-	mode?: "read" | "write";
+	mode?: "read" | "write" | "deny";
 }
 
 export interface NormalizedSandboxConfig {

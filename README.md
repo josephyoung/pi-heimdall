@@ -10,20 +10,22 @@ Ported from the equivalent [opencode](https://opencode.ai) plugins.
 
 ## What it does
 
-pi-heimdall ships five independent extensions. Each one intercepts tool calls
-before they run (and, in one case, after they return) and blocks or redacts
-anything that would leak secrets to the LLM context.
+pi-heimdall ships a single extension entry point (`heimdall.ts`) with six
+independent guards. Each one intercepts tool calls before they run (and, in one
+case, after they return) and blocks or redacts anything that would leak secrets
+to the LLM context.
 
-| Extension | Tool | Blocks / redacts |
-|---|---|---|
-| `sandbox-guard` | `bash` | OS-level filesystem isolation via bubblewrap — only project dir + system binaries visible, synthetic `/etc`, env var stripping |
-| `env-protect` | `read` | Reading `.env`, `.env.*`, `.envrc`, `*.env` — except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults` |
-| `kubectl-secret-guard` | `bash` | `kubectl get secrets`, `kubectl patch ... finalizers`, `kubectl exec` into a pod that dumps env / `/var/run/secrets` / `app.ini` |
-| `sops-secret-guard` | `bash` | Any `sops` invocation that would decrypt content: `sops decrypt`, `sops -d`, `sops --decrypt`, `sops exec-env`, `sops exec-file`, `sops edit`, and bare `sops <file>` |
-| `command-policy-guard` | `bash` | Commands that violate repo policy as defined in `.pi/heimdall.json` (e.g. blocking `cargo test` in favour of `mise test`) |
-| `secret-guard` | `bash` | Commands that reference secret env var names from a project `.env.json`, and redacts their values from bash output (plaintext, base64, rot13, reversed, hex, and hexdump-decoded) |
+| Guard | Type | Tool | Blocks / redacts |
+|---|---|---|---|
+| `sandbox-guard` | always-on | `bash`, `read`, `write`, `edit`, `grep`, `find`, `ls` | OS-level filesystem isolation via bubblewrap — only configured paths + system binaries visible, synthetic `/etc`, env var filtering, `$HOME` read-only by default |
+| `env-protect` | opt-out | `read` | Reading `.env`, `.env.*`, `.envrc`, `*.env` — except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults` |
+| `kubectl-secret-guard` | opt-out | `bash` | `kubectl get secrets`, `kubectl patch ... finalizers`, `kubectl exec` into a pod that dumps env / `/var/run/secrets` / `app.ini` |
+| `sops-secret-guard` | opt-out | `bash` | Any `sops` invocation that would decrypt content: `sops decrypt`, `sops -d`, `sops --decrypt`, `sops exec-env`, `sops exec-file`, `sops edit`, and bare `sops <file>` |
+| `command-policy-guard` | opt-out | `bash` | Commands that violate repo policy as defined in `.pi/heimdall.json` (e.g. blocking `cargo test` in favour of `mise test`) |
+| `secret-guard` | opt-out | `bash` | Commands that reference secret env var names from a project `.env.json`, and redacts their values from bash output (plaintext, base64, rot13, reversed, hex, and hexdump-decoded) |
 
-All four are **independent** — enable whichever subset you need.
+`sandbox-guard` is always-on when enabled in config. The other five are opt-out
+via the `disabled` array (see below).
 
 ## Install
 
@@ -49,31 +51,44 @@ git clone https://github.com/casualjim/pi-heimdall ~/src/pi-heimdall
 pi install ~/src/pi-heimdall
 ```
 
-### Drop into `.pi/extensions/` manually
-
-Pi auto-discovers any `.ts` file in `~/.pi/agent/extensions/` (global) or
-`.pi/extensions/` (project). You can copy or symlink individual files:
-
-```bash
-mkdir -p .pi/extensions
-ln -s ~/src/pi-heimdall/extensions/secret-guard.ts .pi/extensions/
-```
-
-This is useful when you want only some of the guards active.
-
 ### Try without installing
 
 ```bash
 pi -e git:github.com/casualjim/pi-heimdall
 ```
 
+## Configuration
+
+Config is loaded from two locations and deep-merged (project overrides user):
+
+- **User-level**: `~/.pi/agent/heimdall.json`
+- **Project-level**: `<cwd>/.pi/heimdall.json`
+
+All guards are enabled by default. Disable individual opt-out guards via the
+`disabled` array:
+
+```json
+{
+  "disabled": ["env-protect", "kubectl-secret-guard"],
+  "sandbox": { "enabled": true },
+  "commandPolicies": []
+}
+```
+
 ## Configuring `sandbox-guard`
 
-`sandbox-guard` provides filesystem isolation for agent tools. Bash commands run inside a bubblewrap (bwrap) namespace, and built-in file tools (`read`, `write`, `edit`, `grep`, `find`, `ls`) are checked against the same path policy before execution. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any other files outside the configured sandbox paths.
+`sandbox-guard` provides filesystem isolation for agent tools. Bash commands
+run inside a bubblewrap (bwrap) namespace, and built-in file tools (`read`,
+`write`, `edit`, `grep`, `find`, `ls`) are checked against the same path policy
+before execution. The agent cannot read `~/.ssh`, `~/.aws`, `~/.config`, or any
+other files outside the configured sandbox paths — except `$HOME`, which is
+mounted read-only by default so users can reference config files from their home
+directory.
 
-**Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`, `dnf install bubblewrap`, etc.).
+**Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`,
+`dnf install bubblewrap`, etc.).
 
-Configuration lives in `.pi/heimdall.json`. The minimal config is:
+### Minimal config
 
 ```json
 {
@@ -83,7 +98,7 @@ Configuration lives in `.pi/heimdall.json`. The minimal config is:
 }
 ```
 
-Advanced config uses one `paths` object and one `env` object:
+### Full config
 
 ```json
 {
@@ -91,10 +106,12 @@ Advanced config uses one `paths` object and one `env` object:
     "enabled": true,
     "network": "host",
     "paths": {
-      "./src": { "mode": "write" },
+      ".": { "mode": "write" },
+      "~/.pi": { "mode": "write" },
       "/etc": [
         { "path": "/etc/resolv.conf" },
         { "path": "/etc/hosts" },
+        { "path": "/etc/ssl" },
         {
           "path": "/etc/passwd",
           "content": "nobody:x:65534:65534:Nobody:/nonexistent:/usr/sbin/nologin\n"
@@ -114,62 +131,78 @@ Advanced config uses one `paths` object and one `env` object:
 }
 ```
 
-Path rules:
+### Path rules
 
-- `paths` keys are prefixes.
+- `paths` keys are prefixes. Keys support `~` (home directory) and `$VAR`/`${VAR}`
+  expansion (e.g. `"~/.config"`, `"$HOME/projects"`).
 - A value can be one entry or an array of entries.
 - An entry without `path` applies to the whole prefix.
 - An entry with `path` applies to that specific file/path under the prefix.
 - `mode` defaults to `"read"`; write access requires `"mode": "write"`.
-- `content` creates a synthetic file at `path` for sandboxed bash commands. Direct host `read` of synthetic paths is blocked so it cannot expose the real host file.
+- `mode: "deny"` explicitly blocks a subpath of an otherwise allowed prefix.
+  The most specific match wins, so `"~/.ssh": { "mode": "deny" }` blocks
+  `~/.ssh` even when `$HOME` is read-only.
+- `content` creates a synthetic file at `path` for sandboxed bash commands.
+  Direct host `read` of synthetic paths is blocked so it cannot expose the real
+  host file.
 
-Default path visibility:
-
-- Project directory `.` (read-write)
-- `/tmp` (read-write)
-- Read-only system prefixes when present: `/usr`, `/opt`, `/srv`, `/etc`, `/nix/store`, `/run/current-system/sw`
-- Legacy/non-usr-merged compatibility prefixes when needed: `/bin`, `/sbin`, `/lib`, `/lib64`
-
-Environment rules:
-
-- `env.allow` omitted or `null` inherits the current environment.
-- `env.allow: []` starts with no environment variables.
-- `env.deny` removes matching variables and overrides `allow`.
-- `env.set` is applied last. String values set/override variables; `null` unsets them.
-- Exact names and `*` globs are supported for `allow` and `deny`.
-
-**Network:** Shared with host by default (`"host"`). Use `"network": "none"` to isolate the network namespace.
-
-**Disable for a session:** `pi --no-sandbox`
-
-**Check status:** `/sandbox` command in the TUI
-
-## Enabling / disabling individual guards
-
-Use pi's package filter to narrow down which files load:
+Deny example:
 
 ```json
 {
-  "packages": [
-    {
-      "source": "git:github.com/casualjim/pi-heimdall",
-      "extensions": [
-        "extensions/env-protect.ts",
-        "extensions/sops-secret-guard.ts"
-      ]
+  "sandbox": {
+    "paths": {
+      "$HOME": {},
+      "~/.ssh": { "mode": "deny" },
+      "~/.aws": { "mode": "deny" },
+      "~/.config/gh": { "mode": "deny" }
     }
-  ]
+  }
 }
 ```
 
-Or use `pi config` interactively.
+### Default path visibility
+
+| Path | Access | Notes |
+|---|---|---|
+| `.` (project dir) | read-write | |
+| `/tmp` | read-write | |
+| `~/.pi` | read-write | User's pi config directory. Uses `~` expansion to `$HOME/.pi`. |
+| `$HOME` | read-only | Added automatically. User/project config can override. |
+| `/usr` | read-only | System binaries |
+| `/opt` | read-only | |
+| `/srv` | read-only | |
+| `/etc` | read-only | Configure specific files via `paths` |
+| `/nix/store` | read-only | NixOS compatibility |
+| `/run/current-system/sw` | read-only | NixOS compatibility |
+| `/bin`, `/sbin`, `/lib`, `/lib64` | read-only | Legacy non-usr-merged compatibility. Skipped on modern distros. |
+
+### Environment rules
+
+- `env.allow` omitted or `null` — **inherits the current environment** (default).
+- `env.allow: []` — starts with no environment variables.
+- `env.deny` removes matching variables and overrides `allow`.
+- `env.set` is applied last. String values set/override variables; `null` unsets them.
+- Exact names and `*` globs are supported for `allow` and `deny`.
+- Default deny patterns: `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_KEY`.
+
+### Network
+
+- `"host"` (default) — shared with host. Agent can reach Docker, internet.
+- `"none"` — isolated network namespace.
+
+### Session controls
+
+- **Disable for a session:** `pi --no-sandbox`
+- **Check status:** `/sandbox` command in the TUI
 
 ## Configuring `command-policy-guard`
 
-`command-policy-guard` reads repo-specific command policies from `.pi/heimdall.json`
-at the project root. If the file is missing, the guard does nothing.
+`command-policy-guard` reads repo-specific command policies from
+`.pi/heimdall.json` at the project root. If the `commandPolicies` array is
+missing or empty, the guard does nothing.
 
-Example `.pi/heimdall.json`:
+Example:
 
 ```json
 {
@@ -232,10 +265,10 @@ Some patterns cannot be caught without a full shell interpreter:
 
 ## Configuring `secret-guard`
 
-`secret-guard` is the other guard that needs configuration. Create a `.env.json`
-at your project root listing the environment variables that should be treated
-as secrets. **Values in the JSON are ignored — only the keys matter.** The
-actual secret values are captured from `process.env` when pi starts.
+`secret-guard` needs a `.env.json` at your project root listing the environment
+variables that should be treated as secrets. **Values in the JSON are ignored —
+only the keys matter.** The actual secret values are captured from `process.env`
+when pi starts.
 
 ```json
 {
@@ -282,15 +315,21 @@ the block in real time.
 
 ```
 extensions/
+└── heimdall.ts          # entry point — loads config, registers all guards
+
+guards/
 ├── command-policy-guard.ts
 ├── env-protect.ts
 ├── kubectl-secret-guard.ts
+├── sandbox-guard.ts
 ├── secret-guard.ts
-└── sops-secret-guard.ts
+├── sops-secret-guard.ts
+└── types.ts
 ```
 
-Each file is a standalone extension. There is no shared runtime state between
-them — you can delete any file and the others will keep working.
+Each guard is a standalone module. There is no shared runtime state between
+them — you can delete any guard file (except `sandbox-guard.ts` and `types.ts`)
+and the others will keep working.
 
 ## Development
 
