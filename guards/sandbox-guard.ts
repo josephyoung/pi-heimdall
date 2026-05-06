@@ -42,13 +42,34 @@ const DEFAULT_PRIVATE_PATHS = [
 	"~/.pypirc",
 	"~/.cargo/credentials",
 	"~/.cargo/credentials.toml",
+	// AI coding tools (CLI agents, AI-native IDEs) — API keys commonly stored here.
+	// This list is not exhaustive; users should extend it in .pi/heimdall.json.
 	"~/.claude",
 	"~/.codex",
 	"~/.forge",
 	"~/.cursor",
 	"~/.windsurf",
+	"~/.antigravity",
+	"~/.kiro",
+	"~/.augment",
+	"~/.zed",
+	"~/.aider",
+	"~/.gemini",
+	"~/.continue",
+	"~/.codeium",
 	"~/.openai",
 	"~/.anthropic",
+
+	// Editor / IDE configs (may contain stored auth tokens)
+	"~/.vscode",
+	"~/.vscode-server",
+	"~/.code",
+	"~/.config/JetBrains",
+	"~/.local/share/JetBrains",
+	"~/.config/nvim",
+	"~/.local/share/nvim",
+	"~/.vim",
+	"~/.viminfo",
 ];
 
 const DEFAULT_PRIVATE_PATH_DENIES = Object.fromEntries(

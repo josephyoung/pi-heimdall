@@ -81,8 +81,11 @@ All guards are enabled by default. Disable individual opt-out guards via the
 run inside a bubblewrap (bwrap) namespace, and built-in file tools (`read`,
 `write`, `edit`, `grep`, `find`, `ls`) are checked against the same path policy
 before execution. The agent cannot read default private home paths such as
-`~/Private`, `~/.ssh`, `~/.kube`, `~/.aws`, `~/.config`, tool credentials, or
-cloud config directories unless users explicitly opt them in. Other files under
+`~/Private`, `~/.ssh`, `~/.kube`, `~/.aws`, `~/.config`, AI tool configs
+(Claude, Codex, Cursor, Windsurf, Antigravity, Kiro, Augment, Zed, Aider, Gemini,
+Continue, Codeium, OpenAI, Anthropic), editor configs (VS Code, JetBrains,
+Neovim, Vim), cloud/credential directories, and more — unless users explicitly opt
+them in. Other files under
 `$HOME` are mounted read-only by default so users can reference non-sensitive
 home config files.
 
@@ -175,7 +178,10 @@ Deny example:
 | `~/.docker`, `~/.terraform.d`, `~/.vault-token` | denied | Infrastructure credentials/config. |
 | `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials`, `~/.cargo/credentials.toml` | denied | Package registry credentials. |
 | `~/.sops`, `~/.age`, `~/.password-store` | denied | Secret stores and encryption keys. |
-| `~/.claude`, `~/.codex`, `~/.forge`, `~/.cursor`, `~/.windsurf`, `~/.openai`, `~/.anthropic` | denied | AI tool config and credentials. |
+| `~/.claude`, `~/.codex`, `~/.forge`, `~/.cursor`, `~/.windsurf`, `~/.antigravity`, `~/.kiro`, `~/.augment`, `~/.zed`, `~/.aider`, `~/.gemini`, `~/.continue`, `~/.codeium`, `~/.openai`, `~/.anthropic` | denied | AI coding tools (CLI agents, AI-native IDEs) — API keys commonly stored here. This list is not exhaustive; users should extend it in `.pi/heimdall.json`. |
+| `~/.vscode`, `~/.vscode-server`, `~/.code` | denied | VS Code, VS Code Insiders/OSS editor configs (may contain auth tokens). |
+| `~/.config/JetBrains`, `~/.local/share/JetBrains` | denied | JetBrains IDE configs (modern XDG paths). |
+| `~/.config/nvim`, `~/.local/share/nvim`, `~/.vim`, `~/.viminfo` | denied | Neovim and Vim configs. |
 | `$HOME` | read-only | Added automatically. User/project config can override. |
 | `/usr` | read-only | System binaries |
 | `/opt` | read-only | |
