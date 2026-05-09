@@ -57,6 +57,54 @@ pi install ~/src/pi-heimdall
 pi -e git:github.com/casualjim/pi-heimdall
 ```
 
+## Troubleshooting
+
+### oh-pi conflicts
+
+When Heimdall is installed alongside `oh-pi`, pi may fail at startup with a
+conflict similar to:
+
+```text
+Tool "bash" conflicts with .../oh-pi/pi-package/extensions/bg-process.ts
+```
+
+This happens because Heimdall's `sandbox-guard` wraps pi's built-in `bash` tool
+so commands can run through the sandbox policy, while `oh-pi`'s `bg-process.ts`
+also overrides `bash` to auto-background long-running commands. Pi allows an
+extension to override a built-in tool, but two installed packages cannot both
+register a custom tool with the same name.
+
+To use Heimdall and `oh-pi` together, disable only `oh-pi`'s `bg-process.ts`
+extension while keeping the rest of `oh-pi` enabled:
+
+```bash
+pi config
+```
+
+Then uncheck:
+
+```text
+npm:oh-pi → Extensions → bg-process.ts
+```
+
+Or edit `~/.pi/agent/settings.json` manually:
+
+```json
+{
+  "packages": [
+    {
+      "source": "npm:oh-pi",
+      "extensions": ["-pi-package/extensions/bg-process.ts"]
+    },
+    "npm:@casualjim/pi-heimdall"
+  ]
+}
+```
+
+Omitted resource types still load normally, so this keeps `oh-pi` skills,
+prompts, themes, and other extensions enabled. The only disabled piece is the
+`bg-process.ts` extension and the `bg_status` tool it registers.
+
 ## Configuration
 
 Config is loaded from two locations and deep-merged (project overrides user):
