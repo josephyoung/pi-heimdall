@@ -6,7 +6,6 @@
  */
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { HeimdallConfig } from "./types.js";
 
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 
@@ -28,7 +27,7 @@ export const SOPS_DECRYPT = new RegExp(
 	"m",
 );
 
-export function registerSopsSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
+export function registerSopsSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
 		if (disabledSet.has("sops-secret-guard")) return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;

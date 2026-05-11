@@ -19,7 +19,6 @@ import {
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { HeimdallConfig } from "./types.js";
 
 type SecretValues = Record<string, string>;
 
@@ -126,7 +125,7 @@ function redactOutput(output: string, secretValues: SecretValues): string {
 	return result;
 }
 
-export function registerSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
+export function registerSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>): void {
 	let secretKeys: string[] = [];
 	let secretValues: SecretValues = {};
 	let keyPattern: RegExp | null = null;

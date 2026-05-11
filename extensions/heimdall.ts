@@ -49,12 +49,13 @@ const OPT_OUT_GUARD_IDS = [
 ] as const;
 
 /**
- * Deep merge: project overrides user. Nested objects merge recursively,
- * arrays and primitives from project win.
+ * Deep merge: project overrides user. Objects merge recursively.
+ * Arrays concatenate (project appends to user).
+ * Primitives and null from project win.
  */
-function deepMerge(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(base: HeimdallConfig, overrides: HeimdallConfig): HeimdallConfig {
 	const result = { ...base };
-	for (const key of Object.keys(overrides)) {
+	for (const key of Object.keys(overrides) as (keyof HeimdallConfig)[]) {
 		const ov = overrides[key];
 		if (ov === undefined) continue;
 		const bv = base[key];
@@ -62,20 +63,25 @@ function deepMerge(base: Record<string, unknown>, overrides: Record<string, unkn
 			typeof ov === "object" && ov !== null && !Array.isArray(ov) &&
 			typeof bv === "object" && bv !== null && !Array.isArray(bv)
 		) {
-			result[key] = deepMerge(bv as Record<string, unknown>, ov as Record<string, unknown>);
+			(result as Record<string, unknown>)[key] = deepMerge(
+				bv as HeimdallConfig,
+				ov as HeimdallConfig,
+			);
+		} else if (Array.isArray(ov) && Array.isArray(bv)) {
+			(result as Record<string, unknown>)[key] = [...bv, ...ov];
 		} else {
-			result[key] = ov;
+			(result as Record<string, unknown>)[key] = ov;
 		}
 	}
 	return result;
 }
 
-function loadConfigFile(path: string): Record<string, unknown> | null {
+function loadConfigFile(path: string): HeimdallConfig | null {
 	if (!existsSync(path)) return null;
 	try {
 		const raw = readFileSync(path, "utf-8");
 		const parsed = JSON.parse(raw);
-		if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+		if (parsed && typeof parsed === "object") return parsed;
 	} catch {
 		// Parse error — skip
 	}
@@ -95,7 +101,7 @@ export default function heimdall(pi: ExtensionAPI) {
 
 		if (userConfig || projectConfig) {
 			const merged = deepMerge(userConfig ?? {}, projectConfig ?? {});
-			config = merged as unknown as HeimdallConfig;
+			config = merged;
 		}
 
 		if (Array.isArray(config.disabled)) {
@@ -116,9 +122,9 @@ export default function heimdall(pi: ExtensionAPI) {
 	registerSandboxGuard(pi, () => config);
 
 	// Opt-out guards
-	registerSecretGuard(pi, config, disabledSet);
-	registerCommandPolicyGuard(pi, config, disabledSet);
-	registerEnvProtect(pi, config, disabledSet);
-	registerKubectlSecretGuard(pi, config, disabledSet);
-	registerSopsSecretGuard(pi, config, disabledSet);
+	registerSecretGuard(pi, disabledSet);
+	registerCommandPolicyGuard(pi, () => config, disabledSet);
+	registerEnvProtect(pi, disabledSet);
+	registerKubectlSecretGuard(pi, disabledSet);
+	registerSopsSecretGuard(pi, disabledSet);
 }

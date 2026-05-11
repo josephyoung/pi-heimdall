@@ -159,18 +159,13 @@ export function checkCommand(command: string, policies: CommandPolicy[]): Comman
 	return null;
 }
 
-export function registerCommandPolicyGuard(pi: ExtensionAPI, config: HeimdallConfig, disabledSet: Set<string>): void {
+export function registerCommandPolicyGuard(pi: ExtensionAPI, getConfig: () => HeimdallConfig, disabledSet: Set<string>): void {
 	let policies: CommandPolicy[] = [];
-
-	// Policies may come from merged user+project config
-	if (Array.isArray(config.commandPolicies)) {
-		policies = config.commandPolicies;
-	}
 
 	// Reload on session start to pick up fresh config
 	pi.on("session_start", async (_event, _ctx) => {
 		if (disabledSet.has("command-policy-guard")) return;
-		policies = config.commandPolicies ?? [];
+		policies = getConfig().commandPolicies ?? [];
 	});
 
 	pi.on("tool_call", async (event, ctx) => {

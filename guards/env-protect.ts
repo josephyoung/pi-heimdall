@@ -7,7 +7,6 @@
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { basename } from "node:path";
-import type { HeimdallConfig } from "./types.js";
 
 const EXAMPLE_SUFFIXES = ["example", "sample", "template", "dist", "defaults"];
 
@@ -29,7 +28,7 @@ function isDotenvPath(rawPath: string): boolean {
 	return false;
 }
 
-export function registerEnvProtect(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
+export function registerEnvProtect(pi: ExtensionAPI, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
 		if (disabledSet.has("env-protect")) return undefined;
 		if (!isToolCallEventType("read", event)) return undefined;

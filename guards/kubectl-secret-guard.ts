@@ -8,7 +8,6 @@
  */
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { HeimdallConfig } from "./types.js";
 
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 
@@ -42,7 +41,7 @@ function getBlockReason(command: string): string | null {
 	);
 }
 
-export function registerKubectlSecretGuard(pi: ExtensionAPI, _config: HeimdallConfig, disabledSet: Set<string>): void {
+export function registerKubectlSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>): void {
 	pi.on("tool_call", async (event, ctx) => {
 		if (disabledSet.has("kubectl-secret-guard")) return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;
