@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBwrapArgs, filterEnv, getSandboxPathAccess, normalizeSandboxConfig, stripEnv } from "../guards/sandbox-guard";
+import { buildBwrapArgs, filterEnv, getSandboxPathAccess, normalizeSandboxConfig, resolverSupportMounts, stripEnv } from "../guards/sandbox-guard";
 
 describe("sandbox-guard", () => {
 	describe("filterEnv", () => {
@@ -201,6 +201,49 @@ describe("sandbox-guard", () => {
 		it("denies paths outside configured prefixes", () => {
 			const config = normalizeSandboxConfig({ enabled: true, paths: { "./src": { mode: "write" } } });
 			expect(getSandboxPathAccess(config, cwd, "/home/user/.ssh/id_rsa").access).toBe("none");
+		});
+	});
+
+	describe("resolverSupportMounts", () => {
+		it("adds parent dirs and real resolver bind for systemd-resolved symlinks", () => {
+			const support = resolverSupportMounts(
+				"/etc/resolv.conf",
+				"/run/systemd/resolve/stub-resolv.conf",
+				new Set(["/etc"]),
+			);
+
+			expect(support).toEqual({
+				dirs: ["/run", "/run/systemd", "/run/systemd/resolve"],
+				mount: {
+					source: "/run/systemd/resolve/stub-resolv.conf",
+					target: "/run/systemd/resolve/stub-resolv.conf",
+				},
+			});
+		});
+
+		it("does not add a bind when the resolver target is already mounted", () => {
+			const support = resolverSupportMounts(
+				"/etc/resolv.conf",
+				"/run/systemd/resolve/stub-resolv.conf",
+				new Set(["/etc", "/run"]),
+			);
+
+			expect(support).toEqual({ dirs: [] });
+		});
+
+		it("does not add a bind when resolv.conf is not a symlink", () => {
+			const support = resolverSupportMounts("/etc/resolv.conf", "/etc/resolv.conf", new Set(["/etc"]));
+
+			expect(support).toEqual({ dirs: [] });
+		});
+
+		it("allows explicit deny of resolv.conf to suppress resolver support", () => {
+			const config = normalizeSandboxConfig({
+				enabled: true,
+				paths: { "/etc": [{ path: "/etc/resolv.conf", mode: "deny" }] },
+			});
+
+			expect(getSandboxPathAccess(config, "/repo", "/etc/resolv.conf").access).toBe("none");
 		});
 	});
 

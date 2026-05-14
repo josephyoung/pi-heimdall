@@ -138,7 +138,10 @@ them in. Other files under
 home config files.
 
 **Requirements:** Linux with `bubblewrap` installed (`apt install bubblewrap`,
-`dnf install bubblewrap`, etc.).
+`dnf install bubblewrap`, etc.). With host networking, Heimdall also preserves
+DNS on systems where `/etc/resolv.conf` is a symlink (for example,
+`systemd-resolved`) by bind-mounting only the symlink's real target, not all of
+`/run`.
 
 ### Minimal config
 

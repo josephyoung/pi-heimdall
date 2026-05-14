@@ -13,8 +13,8 @@ import {
 	type BashOperations,
 	type ExtensionAPI,
 } from "@mariozechner/pi-coding-agent";
-import { existsSync, lstatSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { HeimdallConfig, NormalizedSandboxConfig, SandboxConfig, SandboxPathEntry } from "./types.js";
@@ -284,6 +284,55 @@ function isCompatibilitySymlink(path: string, mountedPrefixes: Set<string>): boo
 	return false;
 }
 
+export interface ResolverSupportMounts {
+	dirs: string[];
+	mount?: { source: string; target: string };
+}
+
+function isMounted(path: string, mountedPrefixes: Set<string>): boolean {
+	for (const prefix of mountedPrefixes) {
+		if (path === prefix || path.startsWith(`${prefix}/`)) return true;
+	}
+	return false;
+}
+
+function parentDirs(path: string): string[] {
+	const dirs: string[] = [];
+	let current = dirname(path);
+	while (current !== "/" && current !== ".") {
+		dirs.unshift(current);
+		current = dirname(current);
+	}
+	return dirs;
+}
+
+export function resolverSupportMounts(
+	resolvPath: string,
+	realPath: string,
+	mountedPrefixes: Set<string>,
+): ResolverSupportMounts {
+	if (realPath === resolvPath || isMounted(realPath, mountedPrefixes)) {
+		return { dirs: [] };
+	}
+
+	return {
+		dirs: parentDirs(realPath).filter((dir) => !isMounted(dir, mountedPrefixes)),
+		mount: { source: realPath, target: realPath },
+	};
+}
+
+function hostResolverSupportMounts(config: NormalizedSandboxConfig, cwd: string, mountedPrefixes: Set<string>): ResolverSupportMounts {
+	if (config.network !== "host") return { dirs: [] };
+	if (getSandboxPathAccess(config, cwd, "/etc/resolv.conf").access === "none") return { dirs: [] };
+
+	try {
+		if (!lstatSync("/etc/resolv.conf").isSymbolicLink()) return { dirs: [] };
+		return resolverSupportMounts("/etc/resolv.conf", realpathSync("/etc/resolv.conf"), mountedPrefixes);
+	} catch {
+		return { dirs: [] };
+	}
+}
+
 function syntheticFilename(target: string): string {
 	return target.replace(/[^a-zA-Z0-9._-]/g, "_") || "synthetic";
 }
@@ -333,6 +382,15 @@ export function buildBwrapArgs(
 
 	for (const target of dedupe(writeMounts)) {
 		args.push("--bind", target, target);
+		mountedReadPrefixes.add(target);
+	}
+
+	const resolverMounts = hostResolverSupportMounts(config, cwd, mountedReadPrefixes);
+	for (const dir of resolverMounts.dirs) {
+		args.push("--dir", dir);
+	}
+	if (resolverMounts.mount) {
+		args.push("--ro-bind", resolverMounts.mount.source, resolverMounts.mount.target);
 	}
 
 	for (const { source, target } of dedupeMounts(overlayReadMounts)) {
