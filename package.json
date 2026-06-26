@@ -14,7 +14,7 @@
   "author": "casualjim",
   "repository": {
     "type": "git",
-    "url": "https://github.com/josephyoung/pi-heimdall"
+    "url": "git+https://github.com/josephyoung/pi-heimdall.git"
   },
   "type": "module",
   "files": [

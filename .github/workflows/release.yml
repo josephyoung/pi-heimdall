@@ -3,10 +3,13 @@ name: Publish
 on:
   push:
     branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 concurrency:
@@ -22,11 +25,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
           cache: npm
 
       - name: Install dependencies
@@ -40,13 +46,32 @@ jobs:
 
       - name: Read package metadata
         id: pkg
+        run: node -e 'const pkg = require("./package.json"); console.log(`name=${pkg.name}\nversion=${pkg.version}`)' >> "$GITHUB_OUTPUT"
+
+      - name: Check whether package version changed
+        id: changed
         run: |
-          NAME=$(node -e 'console.log(require("./package.json").name)')
-          VERSION=$(node -e 'console.log(require("./package.json").version)')
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || echo "$BEFORE" | grep -q '^0*$'; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PREVIOUS_VERSION=$(git show "$BEFORE:package.json" | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).version));')
+          if [ "$PREVIOUS_VERSION" = "${{ steps.pkg.outputs.version }}" ]; then
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            echo "Version did not change; skipping publish."
+          else
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check whether version already exists on npm
+        if: ${{ steps.changed.outputs.version_changed == 'true' }}
         id: exists
         run: |
           if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
@@ -57,29 +82,5 @@ jobs:
           fi
 
       - name: Publish to npm
-        if: ${{ steps.exists.outputs.published != 'true' }}
-        run: npm publish --provenance --access public
-
-      - name: Determine bump level
-        if: ${{ steps.exists.outputs.published != 'true' }}
-        id: bump
-        run: |
-          if echo "${{ github.event.head_commit.message }}" | grep -q '\[minor\]'; then
-            echo "level=minor" >> "$GITHUB_OUTPUT"
-          else
-            echo "level=patch" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bump version for next publish
-        if: ${{ steps.exists.outputs.published != 'true' }}
-        run: npm version ${{ steps.bump.outputs.level }} --no-git-tag-version
-
-      - name: Commit version bump
-        if: ${{ steps.exists.outputs.published != 'true' }}
-        run: |
-          NEXT_VERSION=$(node -p "require('./package.json').version")
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to ${NEXT_VERSION} [skip ci]"
-          git push origin HEAD:main
+        if: ${{ steps.changed.outputs.version_changed == 'true' && steps.exists.outputs.published != 'true' }}
+        run: npm publish --access public
