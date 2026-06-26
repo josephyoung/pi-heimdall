@@ -16,7 +16,6 @@ import {
 	isBashToolResult,
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -197,7 +196,7 @@ export function registerSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>):
 		const hasValues = Object.keys(secretValues).length > 0;
 
 		let changed = false;
-		const newContent: (TextContent | ImageContent)[] = event.content.map((part) => {
+		const newContent = event.content.map((part) => {
 			if (part.type !== "text") return part;
 			if (typeof part.text !== "string") return part;
 
