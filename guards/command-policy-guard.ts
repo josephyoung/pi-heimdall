@@ -5,7 +5,7 @@
  * Uses `shell-quote` for proper shell tokenization with bypass hardening.
  */
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parse as shellParse, type ParseEntry } from "shell-quote";
 import type { HeimdallConfig, CommandPolicy } from "./types.js";
 
@@ -58,7 +58,7 @@ function splitCommandSegments(tokens: ParseEntry[]): string[][] {
 			i++;
 			if (i + 1 < tokens.length && isStringToken(tokens[i + 1]!)) {
 				i++;
-				heredocDelim = (tokens[i]! as string).replace(/^['"]|['"]$/g, "");
+				heredocDelim = (tokens[i]! as string).replace(/^[']|[']$/g, "");
 			}
 			continue;
 		}
