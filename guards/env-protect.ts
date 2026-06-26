@@ -5,7 +5,7 @@
  * Allows through example/template variants (.env.example, .env.sample, etc.)
  */
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { basename } from "node:path";
 
 const EXAMPLE_SUFFIXES = ["example", "sample", "template", "dist", "defaults"];

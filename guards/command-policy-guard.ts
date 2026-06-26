@@ -5,7 +5,7 @@
  * Uses `shell-quote` for proper shell tokenization with bypass hardening.
  */
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parse as shellParse, type ParseEntry } from "shell-quote";
 import type { HeimdallConfig, CommandPolicy } from "./types.js";
 

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export interface HeimdallConfig {
 	disabled?: string[];
@@ -15,6 +15,7 @@ export interface CommandPolicy {
 export interface SandboxConfig {
 	enabled?: boolean;
 	network?: "host" | "none";
+	userNamespace?: boolean;
 	paths?: Record<string, SandboxPathEntry | SandboxPathEntry[]>;
 	env?: {
 		allow?: string[] | null;
@@ -32,6 +33,7 @@ export interface SandboxPathEntry {
 export interface NormalizedSandboxConfig {
 	enabled: boolean;
 	network: "host" | "none";
+	userNamespace: boolean;
 	paths: Record<string, SandboxPathEntry[]>;
 	env: {
 		allow: string[] | null;

@@ -5,7 +5,7 @@
  * Covers: decrypt subcommand, --decrypt/-d flags, exec-env, exec-file, edit, bare invocation.
  */
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SEG = "(?:[^;|&\\n]|\\\\\\n)";
 

@@ -70,6 +70,14 @@ describe("sandbox-guard", () => {
 			expect(normalizeSandboxConfig().enabled).toBe(false);
 		});
 
+		it("defaults user namespace isolation to enabled", () => {
+			expect(normalizeSandboxConfig({ enabled: true }).userNamespace).toBe(true);
+		});
+
+		it("allows disabling user namespace isolation", () => {
+			expect(normalizeSandboxConfig({ enabled: true, userNamespace: false }).userNamespace).toBe(false);
+		});
+
 		it("denies sensitive home paths by default", () => {
 			const previousHome = process.env.HOME;
 			process.env.HOME = "/home/user";
@@ -341,6 +349,17 @@ describe("sandbox-guard", () => {
 		it("keeps host network by default", () => {
 			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
 			expect(args).not.toContain("--unshare-net");
+		});
+
+		it("adds user namespace isolation by default", () => {
+			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true, paths: {} }), projectDir, syntheticDir, "echo hello");
+			expect(args).toContain("--unshare-user");
+		});
+
+		it("omits user namespace isolation when disabled", () => {
+			const config = normalizeSandboxConfig({ enabled: true, userNamespace: false, paths: {} });
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
+			expect(args).not.toContain("--unshare-user");
 		});
 
 		it("ends with the command", () => {
