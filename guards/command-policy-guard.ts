@@ -58,7 +58,7 @@ function splitCommandSegments(tokens: ParseEntry[]): string[][] {
 			i++;
 			if (i + 1 < tokens.length && isStringToken(tokens[i + 1]!)) {
 				i++;
-				heredocDelim = (tokens[i]! as string).replace(/^[']|[']$/g, "");
+				heredocDelim = (tokens[i]! as string).replace(/^['"]|['"]$/g, "");
 			}
 			continue;
 		}
