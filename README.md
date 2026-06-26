@@ -32,13 +32,13 @@ via the `disabled` array (see below).
 ### Global (all projects)
 
 ```bash
-pi install git:github.com/casualjim/pi-heimdall
+pi install git:github.com/josephyoung/pi-heimdall
 ```
 
 ### Project-local
 
 ```bash
-pi install -l git:github.com/casualjim/pi-heimdall
+pi install -l git:github.com/josephyoung/pi-heimdall
 ```
 
 Project-local installs land in `.pi/settings.json` and are picked up
@@ -47,14 +47,14 @@ automatically for every run in that directory.
 ### From a local clone
 
 ```bash
-git clone https://github.com/casualjim/pi-heimdall ~/src/pi-heimdall
+git clone https://github.com/josephyoung/pi-heimdall ~/src/pi-heimdall
 pi install ~/src/pi-heimdall
 ```
 
 ### Try without installing
 
 ```bash
-pi -e git:github.com/casualjim/pi-heimdall
+pi -e git:github.com/josephyoung/pi-heimdall
 ```
 
 ## Troubleshooting
@@ -96,7 +96,7 @@ Or edit `~/.pi/agent/settings.json` manually:
       "source": "npm:oh-pi",
       "extensions": ["-pi-package/extensions/bg-process.ts"]
     },
-    "npm:@casualjim/pi-heimdall"
+    "npm:@josephyoung/pi-heimdall"
   ]
 }
 ```

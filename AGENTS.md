@@ -2,7 +2,7 @@
 
 ## Project
 
-`@casualjim/pi-heimdall` is a pi package that registers one extension entry point
+`@josephyoung/pi-heimdall` is a pi package that registers one extension entry point
 and several independent security guards. Its job is to block or redact tool
 activity that could expose secrets or bypass a repository policy.
 
