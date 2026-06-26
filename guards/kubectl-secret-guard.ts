@@ -7,12 +7,12 @@
  *   3. kubectl exec into pods accessing sensitive data
  */
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const SEG = "(?:[^;|&\\n]|\\\\\\n)";
+const SEG = "(?:[^;|&\\n]|\\\\\n)";
 
 export const KUBECTL_BLOCKED = new RegExp(
-	`\\bkubectl\\b${SEG}*\\b(?:(get\\b${SEG}*\\bsecrets?\\b)|(patch\\b${SEG}*finalizers)|(exec\\b${SEG}*(?:app\\.ini|/var/run/secrets|\\bprintenv\\b|\\benv\\b)))`,
+	`\bkubectl\b${SEG}*\b(?:(get\b${SEG}*\bsecrets?\b)|(patch\b${SEG}*finalizers)|(exec\b${SEG}*(?:app\.ini|/var/run/secrets|\bprintenv\b|\benv\b)))`,
 );
 
 function getBlockReason(command: string): string | null {
