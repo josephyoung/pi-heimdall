@@ -12,7 +12,7 @@ import {
 	isToolCallEventType,
 	type BashOperations,
 	type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { existsSync, lstatSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -42,8 +42,6 @@ const DEFAULT_PRIVATE_PATHS = [
 	"~/.pypirc",
 	"~/.cargo/credentials",
 	"~/.cargo/credentials.toml",
-	// AI coding tools (CLI agents, AI-native IDEs) — API keys commonly stored here.
-	// This list is not exhaustive; users should extend it in .pi/heimdall.json.
 	"~/.claude",
 	"~/.codex",
 	"~/.forge",
@@ -59,8 +57,6 @@ const DEFAULT_PRIVATE_PATHS = [
 	"~/.codeium",
 	"~/.openai",
 	"~/.anthropic",
-
-	// Editor / IDE configs (may contain stored auth tokens)
 	"~/.vscode",
 	"~/.vscode-server",
 	"~/.code",
@@ -81,25 +77,22 @@ const DEFAULT_PATHS: Record<string, SandboxPathEntry | SandboxPathEntry[]> = {
 	"/tmp": { mode: "write" },
 	"~/.pi": { mode: "write" },
 	...DEFAULT_PRIVATE_PATH_DENIES,
-
 	"/usr": {},
 	"/opt": {},
 	"/srv": {},
 	"/etc": {},
 	"/nix/store": {},
 	"/run/current-system/sw": {},
-
-	// Legacy/non-usr-merged Linux compatibility. Symlinks into already-mounted
-	// prefixes are skipped during normalization, so these are harmless on modern distros.
 	"/bin": {},
 	"/sbin": {},
 	"/lib": {},
-	"/lib64": {}
+	"/lib64": {},
 };
 
 const DEFAULT_SANDBOX_CONFIG: NormalizedSandboxConfig = {
 	enabled: false,
 	network: "host",
+	userNamespace: true,
 	paths: normalizePaths(DEFAULT_PATHS),
 	env: {
 		allow: null,
@@ -166,8 +159,6 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 		...normalizePaths(paths),
 	});
 
-	// Add HOME as read-only by default so users can reference config files
-	// and provide deny rules. User/project config can override with { mode: "write" }.
 	const homeDir = process.env.HOME;
 	if (homeDir && !(homeDir in mergedPaths)) {
 		mergedPaths[homeDir] = [{}];
@@ -176,6 +167,7 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 	return {
 		enabled: sandbox.enabled ?? DEFAULT_SANDBOX_CONFIG.enabled,
 		network: sandbox.network ?? (legacy?.networkAccess === false ? "none" : DEFAULT_SANDBOX_CONFIG.network),
+		userNamespace: sandbox.userNamespace ?? DEFAULT_SANDBOX_CONFIG.userNamespace,
 		paths: mergedPaths,
 		env: {
 			allow: envAllow === undefined ? DEFAULT_SANDBOX_CONFIG.env.allow : envAllow,
@@ -185,7 +177,6 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 	};
 }
 
-/** Resolve ~ and $VAR/${VAR} references in path strings. */
 function expandPath(path: string): string {
 	if (path.startsWith("~")) {
 		if (path === "~" || path.startsWith("~/")) {
@@ -260,8 +251,6 @@ export function getSandboxPathAccess(
 
 function canReadSandboxPath(config: NormalizedSandboxConfig, cwd: string, path: string): boolean {
 	const access = getSandboxPathAccess(config, cwd, path);
-	// Synthetic mounts do not exist on the host filesystem. Letting the built-in
-	// read tool read that path would expose the host file instead of sandbox content.
 	return access.access !== "none" && !access.synthetic;
 }
 
@@ -397,7 +386,7 @@ export function buildBwrapArgs(
 		args.push("--ro-bind", source, target);
 	}
 
-	args.push("--unshare-user");
+	if (config.userNamespace) args.push("--unshare-user");
 	args.push("--unshare-pid");
 	if (config.network === "none") args.push("--unshare-net");
 	args.push("--proc", "/proc");
@@ -608,6 +597,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 		const writeCount = entries.filter((entry) => entry.mode === "write").length;
 		const envIcon = config.env.allow === null ? "E∞" : `E${config.env.allow.length}`;
 		const networkIcon = config.network === "host" ? "↔" : "⊘";
+		const userNamespaceIcon = config.userNamespace ? "U" : "U⊘";
 		const theme = ctx.ui.theme;
 		ctx.ui.setStatus(
 			"heimdall-sandbox",
@@ -616,6 +606,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 				theme.fg("success", `✎${writeCount}`),
 				theme.fg("muted", envIcon),
 				theme.fg(config.network === "host" ? "success" : "warning", networkIcon),
+				theme.fg(config.userNamespace ? "success" : "warning", userNamespaceIcon),
 			].join(theme.fg("dim", "│")),
 		);
 		ctx.ui.notify("heimdall sandbox: active", "info");
@@ -652,7 +643,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 		const block = (operation: "read" | "write", path: string) => {
 			const reason =
 				`Blocked: ${event.toolName} attempted to ${operation} "${path}" outside the heimdall sandbox path policy. ` +
-				`Use a path mounted with ${operation === "write" ? 'mode "write"' : 'read access'} in sandbox.paths, or ask the user to adjust .pi/heimdall.json.`;
+				`Use a path mounted with ${operation === "write" ? 'mode "write"' : "read access"} in sandbox.paths, or ask the user to adjust .pi/heimdall.json.`;
 			if (ctx.hasUI) ctx.ui.notify(`heimdall sandbox: blocked ${event.toolName} ${path}`, "warning");
 			return { block: true as const, reason };
 		};
@@ -685,6 +676,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 				"heimdall sandbox configuration:",
 				"",
 				`Network: ${sandboxConfig.network === "host" ? "shared (host)" : "isolated"}`,
+				`User namespace: ${sandboxConfig.userNamespace ? "enabled" : "disabled"}`,
 				`Env allow: ${sandboxConfig.env.allow === null ? "inherited" : sandboxConfig.env.allow.join(", ")}`,
 				`Env deny: ${sandboxConfig.env.deny?.join(", ") || "(none)"}`,
 				"Paths:",
