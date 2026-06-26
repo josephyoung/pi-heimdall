@@ -156,7 +156,7 @@ export function registerSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>):
 
 		if (secretKeys.length > 0) {
 			const escaped = secretKeys.map(escapeRegex);
-			keyPattern = new RegExp(`\b(?:${escaped.join("|")})\b`, "i");
+			keyPattern = new RegExp(`\\b(?:${escaped.join("|")})\\b`, "i");
 		}
 	}
 
