@@ -15,7 +15,7 @@ import {
 	isToolCallEventType,
 	isBashToolResult,
 	type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -156,7 +156,7 @@ export function registerSecretGuard(pi: ExtensionAPI, disabledSet: Set<string>):
 
 		if (secretKeys.length > 0) {
 			const escaped = secretKeys.map(escapeRegex);
-			keyPattern = new RegExp(`\\b(?:${escaped.join("|")})\\b`, "i");
+			keyPattern = new RegExp(`\b(?:${escaped.join("|")})\b`, "i");
 		}
 	}
 
