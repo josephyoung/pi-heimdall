@@ -258,6 +258,9 @@ describe("sandbox-guard", () => {
 	describe("buildBwrapArgs", () => {
 		let syntheticDir: string;
 		let projectDir: string;
+		const expectArgSequence = (args: string[], sequence: string[]) => {
+			expect(args.join("\0")).toContain(sequence.join("\0"));
+		};
 
 		beforeEach(() => {
 			syntheticDir = join(tmpdir(), `heimdall-test-synthetic-${Date.now()}`);
@@ -321,10 +324,8 @@ describe("sandbox-guard", () => {
 			try {
 				const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
 
-				expect(args).toContain("--dev-bind");
-				expect(args).toContain("/dev");
-				expect(args).toContain("--ro-bind");
-				expect(args).toContain("/proc");
+				expectArgSequence(args, ["--dev-bind", "/dev", "/dev"]);
+				expectArgSequence(args, ["--ro-bind", "/proc", "/proc"]);
 				expect(args).not.toContain("--dev");
 				expect(args).not.toContain("--proc");
 			} finally {
@@ -403,11 +404,50 @@ describe("sandbox-guard", () => {
 			try {
 				const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
 				const args = buildBwrapArgs(config, workspace, syntheticDir, "echo hello");
-				const bindIdx = args.indexOf("--bind");
 
-				expect(args[bindIdx + 1]).toBe(bindRoot);
-				expect(args[bindIdx + 2]).toBe(bindRoot);
+				expectArgSequence(args, ["--bind", bindRoot, bindRoot]);
 				expect(args).not.toContain(workspace);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previous;
+				}
+			}
+		});
+
+		it("normalizes a trailing slash in the bwrap bind root", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			const bindRoot = join(projectDir, "opt", "dano");
+			const workspace = join(bindRoot, "runtime-data", "workspaces", "ws_1");
+			mkdirSync(workspace, { recursive: true });
+			process.env.HEIMDALL_BWRAP_BIND_ROOT = `${bindRoot}/`;
+
+			try {
+				const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
+				const args = buildBwrapArgs(config, workspace, syntheticDir, "echo hello");
+
+				expectArgSequence(args, ["--bind", bindRoot, bindRoot]);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previous;
+				}
+			}
+		});
+
+		it("rejects unsafe bwrap bind roots", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
+
+			try {
+				for (const bindRoot of ["relative/path", "/"]) {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = bindRoot;
+					expect(() => buildBwrapArgs(config, projectDir, syntheticDir, "echo hello")).toThrow(
+						"Invalid HEIMDALL_BWRAP_BIND_ROOT",
+					);
+				}
 			} finally {
 				if (previous === undefined) {
 					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
