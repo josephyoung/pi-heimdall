@@ -336,9 +336,15 @@ export function buildBwrapArgs(
 	const readPrefixMounts: string[] = [];
 	const writeMounts: string[] = [];
 	const overlayReadMounts: Array<{ source: string; target: string }> = [];
+	const bindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS === "1";
+	const bindRoot = process.env.HEIMDALL_BWRAP_BIND_ROOT;
 
 	args.push("--tmpfs", "/");
-	args.push("--dev", "/dev");
+	if (bindKernelFs) {
+		args.push("--dev-bind", "/dev", "/dev");
+	} else {
+		args.push("--dev", "/dev");
+	}
 
 	for (const [prefix, entries] of Object.entries(config.paths)) {
 		for (const entry of entries) {
@@ -353,7 +359,7 @@ export function buildBwrapArgs(
 			if (entry.mode === "deny" || !existsSync(target)) continue;
 
 			if (entry.mode === "write") {
-				writeMounts.push(target);
+				writeMounts.push(bindRoot && bindRoot.startsWith("/") && pathMatchesPrefix(target, bindRoot) ? bindRoot : target);
 			} else if (entry.path) {
 				overlayReadMounts.push({ source: target, target });
 			} else {
@@ -389,7 +395,11 @@ export function buildBwrapArgs(
 	if (config.userNamespace) args.push("--unshare-user");
 	args.push("--unshare-pid");
 	if (config.network === "none") args.push("--unshare-net");
-	args.push("--proc", "/proc");
+	if (bindKernelFs) {
+		args.push("--ro-bind", "/proc", "/proc");
+	} else {
+		args.push("--proc", "/proc");
+	}
 	args.push("--die-with-parent");
 	args.push("--new-session");
 	args.push("--");

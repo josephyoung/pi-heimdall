@@ -283,6 +283,59 @@ describe("sandbox-guard", () => {
 			expect(args[devIdx + 1]).toBe("/dev");
 		});
 
+		it("keeps default bwrap device and proc mounts", () => {
+			const previousBindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			const previousBindRoot = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+
+			try {
+				const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
+				const args = buildBwrapArgs(config, projectDir, syntheticDir, "echo hello");
+
+				expect(args).toContain("--dev");
+				expect(args).not.toContain("--dev-bind");
+				expect(args).toContain("--proc");
+				expect(args.join("\0")).not.toContain(["--ro-bind", "/proc", "/proc"].join("\0"));
+				const bindIdx = args.indexOf("--bind");
+				expect(args[bindIdx + 1]).toBe(projectDir);
+				expect(args[bindIdx + 2]).toBe(projectDir);
+			} finally {
+				if (previousBindKernelFs === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previousBindKernelFs;
+				}
+				if (previousBindRoot === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previousBindRoot;
+				}
+			}
+		});
+
+		it("can bind host /dev and /proc instead of mounting nested kernel filesystems", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = "1";
+
+			try {
+				const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
+
+				expect(args).toContain("--dev-bind");
+				expect(args).toContain("/dev");
+				expect(args).toContain("--ro-bind");
+				expect(args).toContain("/proc");
+				expect(args).not.toContain("--dev");
+				expect(args).not.toContain("--proc");
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previous;
+				}
+			}
+		});
+
 		it("mounts default system prefixes read-only when present", () => {
 			const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
 			for (const sysPath of ["/usr", "/opt", "/srv", "/etc", "/nix/store", "/run/current-system/sw"]) {
@@ -338,6 +391,30 @@ describe("sandbox-guard", () => {
 			const bindIdx = args.indexOf("--bind");
 			expect(args[bindIdx + 1]).toBe(projectDir);
 			expect(args[bindIdx + 2]).toBe(projectDir);
+		});
+
+		it("can promote writable mounts under an absolute bwrap bind root", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			const bindRoot = join(projectDir, "opt", "dano");
+			const workspace = join(bindRoot, "runtime-data", "workspaces", "ws_1");
+			mkdirSync(workspace, { recursive: true });
+			process.env.HEIMDALL_BWRAP_BIND_ROOT = bindRoot;
+
+			try {
+				const config = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
+				const args = buildBwrapArgs(config, workspace, syntheticDir, "echo hello");
+				const bindIdx = args.indexOf("--bind");
+
+				expect(args[bindIdx + 1]).toBe(bindRoot);
+				expect(args[bindIdx + 2]).toBe(bindRoot);
+				expect(args).not.toContain(workspace);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previous;
+				}
+			}
 		});
 
 		it("supports network isolation", () => {
