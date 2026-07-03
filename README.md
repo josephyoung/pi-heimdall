@@ -32,17 +32,23 @@ via the `disabled` array (see below).
 ### Global (all projects)
 
 ```bash
-pi install git:github.com/josephyoung/pi-heimdall
+pi install @josephyoung/pi-heimdall
 ```
 
 ### Project-local
 
 ```bash
-pi install -l git:github.com/josephyoung/pi-heimdall
+pi install -l @josephyoung/pi-heimdall
 ```
 
 Project-local installs land in `.pi/settings.json` and are picked up
 automatically for every run in that directory.
+
+### From GitHub
+
+```bash
+pi install git:github.com/josephyoung/pi-heimdall
+```
 
 ### From a local clone
 
@@ -54,7 +60,7 @@ pi install ~/src/pi-heimdall
 ### Try without installing
 
 ```bash
-pi -e git:github.com/josephyoung/pi-heimdall
+pi -e @josephyoung/pi-heimdall
 ```
 
 ## Troubleshooting
