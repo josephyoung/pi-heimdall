@@ -326,6 +326,17 @@ function syntheticFilename(target: string): string {
 	return target.replace(/[^a-zA-Z0-9._-]/g, "_") || "synthetic";
 }
 
+function bwrapBindRoot(): string | null {
+	const raw = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+	if (!raw) return null;
+
+	const root = raw.replace(/\/+$/, "") || "/";
+	if (!root.startsWith("/") || root === "/") {
+		throw new Error("Invalid HEIMDALL_BWRAP_BIND_ROOT: expected an absolute path below /");
+	}
+	return root;
+}
+
 export function buildBwrapArgs(
 	config: NormalizedSandboxConfig,
 	cwd: string,
@@ -337,7 +348,7 @@ export function buildBwrapArgs(
 	const writeMounts: string[] = [];
 	const overlayReadMounts: Array<{ source: string; target: string }> = [];
 	const bindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS === "1";
-	const bindRoot = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+	const bindRoot = bwrapBindRoot();
 
 	args.push("--tmpfs", "/");
 	if (bindKernelFs) {
@@ -359,7 +370,7 @@ export function buildBwrapArgs(
 			if (entry.mode === "deny" || !existsSync(target)) continue;
 
 			if (entry.mode === "write") {
-				writeMounts.push(bindRoot && bindRoot.startsWith("/") && pathMatchesPrefix(target, bindRoot) ? bindRoot : target);
+				writeMounts.push(bindRoot && pathMatchesPrefix(target, bindRoot) ? bindRoot : target);
 			} else if (entry.path) {
 				overlayReadMounts.push({ source: target, target });
 			} else {

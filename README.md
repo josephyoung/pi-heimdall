@@ -256,6 +256,22 @@ Deny example:
 - `"host"` (default) — shared with host. Agent can reach Docker, internet.
 - `"none"` — isolated network namespace.
 
+### Container bwrap compatibility
+
+For rootless or non-root containers where bubblewrap cannot mount nested kernel
+filesystems or remount a workspace subdirectory, these environment variables
+adjust only the bwrap mount arguments:
+
+- `HEIMDALL_BWRAP_BIND_KERNEL_FS=1` uses `--dev-bind /dev /dev` and
+  `--ro-bind /proc /proc` instead of mounting fresh `/dev` and `/proc`.
+- `HEIMDALL_BWRAP_BIND_ROOT=/absolute/path` promotes writable mounts below that
+  root to `--bind /absolute/path /absolute/path`. The value must be an absolute
+  path below `/`; `/` and relative paths are rejected.
+
+`HEIMDALL_BWRAP_BIND_ROOT` does not change the sandbox path policy checks, but it
+does make the specified root the actual writable bwrap mount. Use a root that
+contains only data the sandboxed command may write.
+
 ### Session controls
 
 - **Disable for a session:** `pi --no-sandbox`
