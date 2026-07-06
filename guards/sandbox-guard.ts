@@ -9,6 +9,10 @@
 
 import {
 	createBashTool,
+	getAgentDir,
+	isFindToolResult,
+	isGrepToolResult,
+	isLsToolResult,
 	isToolCallEventType,
 	type BashOperations,
 	type ExtensionAPI,
@@ -203,6 +207,147 @@ function resolveSandboxPath(path: string, cwd: string): string {
 
 function pathMatchesPrefix(path: string, prefix: string): boolean {
 	return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function realpathOrNull(path: string): string | null {
+	try {
+		return realpathSync(path);
+	} catch {
+		return null;
+	}
+}
+
+export function heimdallConfigPaths(cwd: string, agentDir = getAgentDir()): string[] {
+	const result = new Set<string>();
+	for (const path of [
+		join(agentDir, "heimdall.json"),
+		join(cwd, ".pi", "heimdall.json"),
+	]) {
+		const resolved = resolve(path);
+		result.add(resolved);
+		const real = realpathOrNull(resolved);
+		if (real) result.add(real);
+	}
+	return [...result];
+}
+
+function pathCandidates(rawPath: string, cwd: string): string[] {
+	const result = new Set<string>();
+	const resolved = resolveSandboxPath(rawPath.replace(/^@/, ""), cwd);
+	result.add(resolved);
+	const real = realpathOrNull(resolved);
+	if (real) result.add(real);
+	return [...result];
+}
+
+export function isProtectedHeimdallConfigPath(
+	rawPath: string,
+	cwd: string,
+	protectedPaths: string[],
+): boolean {
+	const protectedSet = new Set(protectedPaths);
+	return pathCandidates(rawPath, cwd).some((path) => protectedSet.has(path));
+}
+
+export function protectHeimdallConfigPaths(
+	config: NormalizedSandboxConfig,
+	protectedPaths: string[],
+): NormalizedSandboxConfig {
+	const paths = { ...config.paths };
+	for (const path of protectedPaths) {
+		// ponytail: synthetic empty file hides config contents; broader parent masking if existence must be hidden too.
+		paths[path] = [...(paths[path] ?? []), { path, content: "" }];
+	}
+	return { ...config, paths };
+}
+
+function resolveToolOutputPath(rawSearchPath: unknown, cwd: string, outputPath: string): string {
+	const cleanOutputPath = outputPath.replace(/\/$/, "");
+	if (cleanOutputPath.startsWith("/")) return cleanOutputPath;
+
+	const searchRoot = resolveSandboxPath(
+		typeof rawSearchPath === "string" && rawSearchPath ? rawSearchPath : ".",
+		cwd,
+	);
+	let base = searchRoot;
+	try {
+		if (!lstatSync(searchRoot).isDirectory()) base = dirname(searchRoot);
+	} catch {
+		// Keep searchRoot as the base; tool output is already best-effort text.
+	}
+	return resolve(base, cleanOutputPath);
+}
+
+function isToolNoticeLine(line: string): boolean {
+	return /^\[(?:\d+ .* limit|Truncated:|Showing )/.test(line.trim());
+}
+
+function filterLines(
+	text: string,
+	isProtectedLine: (line: string) => boolean,
+	emptyText: string,
+): string {
+	const lines = text.split("\n");
+	let changed = false;
+	const kept = lines.filter((line) => {
+		const drop = isProtectedLine(line);
+		if (drop) changed = true;
+		return !drop;
+	});
+	if (!changed) return text;
+
+	const withoutStaleNotices = kept.filter((line) => !isToolNoticeLine(line));
+	const visible = withoutStaleNotices.filter((line) => line.trim().length > 0);
+	return visible.length > 0 ? withoutStaleNotices.join("\n").trimEnd() : emptyText;
+}
+
+function isProtectedOutputPath(
+	rawSearchPath: unknown,
+	outputPath: string,
+	cwd: string,
+	protectedPaths: string[],
+): boolean {
+	return isProtectedHeimdallConfigPath(
+		resolveToolOutputPath(rawSearchPath, cwd, outputPath),
+		cwd,
+		protectedPaths,
+	);
+}
+
+function grepOutputPath(line: string): string | null {
+	const match = line.match(/^(.+?)(?::\d+:|-\d+-)/);
+	return match?.[1] ?? null;
+}
+
+export function filterProtectedHeimdallConfigOutput(
+	toolName: "grep" | "find" | "ls",
+	text: string,
+	input: Record<string, unknown>,
+	cwd: string,
+	protectedPaths: string[],
+): string {
+	if (protectedPaths.length === 0) return text;
+
+	if (toolName === "grep") {
+		return filterLines(text, (line) => {
+			const outputPath = grepOutputPath(line);
+			return outputPath !== null && isProtectedOutputPath(input.path, outputPath, cwd, protectedPaths);
+		}, "No matches found");
+	}
+
+	if (toolName === "find") {
+		return filterLines(text, (line) => (
+			line.trim().length > 0 &&
+			!isToolNoticeLine(line) &&
+			isProtectedOutputPath(input.path, line.trim(), cwd, protectedPaths)
+		), "No files found matching pattern");
+	}
+
+	return filterLines(text, (line) => (
+		line.trim().length > 0 &&
+		!isToolNoticeLine(line) &&
+		isProtectedOutputPath(input.path, line.trim(), cwd, protectedPaths)
+	), "(empty directory)");
 }
 
 export interface SandboxPathAccess {
@@ -566,10 +711,24 @@ function createSandboxedBashOps(config: NormalizedSandboxConfig, cwd: string): B
 	};
 }
 
+function protectedConfigBashBlockReason(reason: string): string {
+	return `Blocked: bash cannot run because Heimdall Protected Configuration cannot be hidden without an active sandbox (${reason}).`;
+}
+
+function createBlockedBashOps(reason: string): BashOperations {
+	return {
+		async exec() {
+			throw new Error(protectedConfigBashBlockReason(reason));
+		},
+	};
+}
+
 export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => HeimdallConfig): void {
 	let sandboxConfig: NormalizedSandboxConfig | null = null;
 	let sandboxCwd = process.cwd();
 	let bwrapAvailable = false;
+	let sandboxUnavailableReason = "sandbox is not active";
+	let protectedConfigPaths = heimdallConfigPaths(sandboxCwd);
 
 	pi.registerFlag("no-sandbox", {
 		description: "Disable OS-level sandboxing for bash commands",
@@ -579,22 +738,29 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 
 	pi.on("session_start", async (_event, ctx) => {
 		sandboxCwd = ctx.cwd;
+		protectedConfigPaths = heimdallConfigPaths(ctx.cwd);
 		const noSandbox = pi.getFlag("no-sandbox") as boolean;
 		if (noSandbox) {
 			sandboxConfig = null;
 			bwrapAvailable = false;
+			sandboxUnavailableReason = "disabled via --no-sandbox";
 			ctx.ui.notify("heimdall sandbox: disabled via --no-sandbox", "warning");
 			return;
 		}
 
-		const config = normalizeSandboxConfig(getHeimdallConfig().sandbox as SandboxConfig | undefined);
+		const config = protectHeimdallConfigPaths(
+			normalizeSandboxConfig(getHeimdallConfig().sandbox as SandboxConfig | undefined),
+			protectedConfigPaths,
+		);
 		sandboxConfig = null;
 		bwrapAvailable = false;
+		sandboxUnavailableReason = "disabled by configuration";
 		if (!config.enabled) {
 			return;
 		}
 
 		if (process.platform !== "linux") {
+			sandboxUnavailableReason = `not supported on ${process.platform}`;
 			ctx.ui.notify(
 				`heimdall sandbox: not supported on ${process.platform} (Linux only)`,
 				"warning",
@@ -604,6 +770,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 
 		const bwrap = findBwrap();
 		if (!bwrap) {
+			sandboxUnavailableReason = "bubblewrap not found";
 			ctx.ui.notify(
 				"heimdall sandbox: bwrap not found. Install bubblewrap to enable sandboxing.",
 				"warning",
@@ -613,6 +780,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 
 		bwrapAvailable = true;
 		sandboxConfig = config;
+		sandboxUnavailableReason = "";
 
 		const entries = Object.values(config.paths).flat();
 		const writeCount = entries.filter((entry) => entry.mode === "write").length;
@@ -641,7 +809,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 		label: "bash (heimdall sandbox)",
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!sandboxConfig || !bwrapAvailable) {
-				return localBash.execute(id, params, signal, onUpdate);
+				throw new Error(protectedConfigBashBlockReason(sandboxUnavailableReason));
 			}
 
 			const sandboxedBash = createBashTool(sandboxCwd, {
@@ -652,15 +820,17 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 	});
 
 	pi.on("user_bash", () => {
-		if (!sandboxConfig || !bwrapAvailable) return undefined;
+		if (!sandboxConfig || !bwrapAvailable) {
+			return {
+				operations: createBlockedBashOps(sandboxUnavailableReason),
+			};
+		}
 		return {
 			operations: createSandboxedBashOps(sandboxConfig, sandboxCwd),
 		};
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!sandboxConfig || !sandboxConfig.enabled) return undefined;
-
 		const block = (operation: "read" | "write", path: string) => {
 			const reason =
 				`Blocked: ${event.toolName} attempted to ${operation} "${path}" outside the heimdall sandbox path policy. ` +
@@ -671,6 +841,30 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 
 		const input = event.input as Record<string, unknown>;
 		const path = typeof input.path === "string" ? input.path : ".";
+
+		if (isToolCallEventType("bash", event) && (!sandboxConfig || !bwrapAvailable)) {
+			return {
+				block: true as const,
+				reason: protectedConfigBashBlockReason(sandboxUnavailableReason),
+			};
+		}
+
+		const blockProtectedConfig = (operation: "read" | "write", protectedPath: string) => {
+			const reason = `Blocked: ${event.toolName} attempted to ${operation} Heimdall Protected Configuration.`;
+			if (ctx.hasUI) ctx.ui.notify(`heimdall sandbox: blocked ${event.toolName} ${protectedPath}`, "warning");
+			return { block: true as const, reason };
+		};
+
+		if (typeof input.path === "string" && isProtectedHeimdallConfigPath(input.path, sandboxCwd, protectedConfigPaths)) {
+			if (isToolCallEventType("read", event) || event.toolName === "grep" || event.toolName === "find" || event.toolName === "ls") {
+				return blockProtectedConfig("read", input.path);
+			}
+			if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
+				return blockProtectedConfig("write", input.path);
+			}
+		}
+
+		if (!sandboxConfig || !sandboxConfig.enabled) return undefined;
 
 		if (isToolCallEventType("read", event) || event.toolName === "grep" || event.toolName === "find" || event.toolName === "ls") {
 			if (!canReadSandboxPath(sandboxConfig, sandboxCwd, path)) return block("read", path);
@@ -683,6 +877,27 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 		}
 
 		return undefined;
+	});
+
+	pi.on("tool_result", async (event) => {
+		if (!isGrepToolResult(event) && !isFindToolResult(event) && !isLsToolResult(event)) return undefined;
+
+		let changed = false;
+		const content = event.content.map((part) => {
+			if (part.type !== "text") return part;
+			const text = filterProtectedHeimdallConfigOutput(
+				event.toolName,
+				part.text,
+				event.input,
+				sandboxCwd,
+				protectedConfigPaths,
+			);
+			if (text === part.text) return part;
+			changed = true;
+			return { ...part, text };
+		});
+
+		return changed ? { content } : undefined;
 	});
 
 	pi.registerCommand("sandbox", {

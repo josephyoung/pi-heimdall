@@ -1,8 +1,71 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBwrapArgs, filterEnv, getSandboxPathAccess, normalizeSandboxConfig, resolverSupportMounts, stripEnv } from "../guards/sandbox-guard";
+import {
+	buildBwrapArgs,
+	filterEnv,
+	filterProtectedHeimdallConfigOutput,
+	getSandboxPathAccess,
+	heimdallConfigPaths,
+	isProtectedHeimdallConfigPath,
+	normalizeSandboxConfig,
+	protectHeimdallConfigPaths,
+	registerSandboxGuard,
+	resolverSupportMounts,
+	stripEnv,
+} from "../guards/sandbox-guard";
+import type { HeimdallConfig } from "../guards/types";
+
+function sandboxGuardHarness(cwd: string, config: HeimdallConfig) {
+	const handlers: Record<string, Array<(event: any, ctx: any) => any>> = {};
+	let bash: any;
+	const ctx = {
+		cwd,
+		hasUI: false,
+		ui: {
+			notify: () => undefined,
+			setStatus: () => undefined,
+			theme: {
+				fg: (_kind: string, text: string) => text,
+			},
+		},
+	};
+	const pi = {
+		registerFlag: () => undefined,
+		getFlag: () => false,
+		registerTool: (tool: any) => {
+			if (tool.name === "bash") bash = tool;
+		},
+		registerCommand: () => undefined,
+		on: (event: string, handler: (event: any, ctx: any) => any) => {
+			handlers[event] = [...(handlers[event] ?? []), handler];
+		},
+	};
+
+	registerSandboxGuard(pi as any, () => config);
+
+	return {
+		get bash() {
+			return bash;
+		},
+		startSession: () => handlers.session_start[0]({}, ctx),
+		toolCall: (toolName: string, input: Record<string, unknown>) => (
+			handlers.tool_call[0]({ type: "tool_call", toolCallId: "1", toolName, input }, ctx)
+		),
+		toolResult: (toolName: string, input: Record<string, unknown>, text: string) => (
+			handlers.tool_result[0]({
+				type: "tool_result",
+				toolCallId: "1",
+				toolName,
+				input,
+				content: [{ type: "text", text }],
+				isError: false,
+				details: undefined,
+			}, ctx)
+		),
+	};
+}
 
 describe("sandbox-guard", () => {
 	describe("filterEnv", () => {
@@ -209,6 +272,155 @@ describe("sandbox-guard", () => {
 		it("denies paths outside configured prefixes", () => {
 			const config = normalizeSandboxConfig({ enabled: true, paths: { "./src": { mode: "write" } } });
 			expect(getSandboxPathAccess(config, cwd, "/home/user/.ssh/id_rsa").access).toBe("none");
+		});
+	});
+
+	describe("protected Heimdall configuration", () => {
+		let projectDir: string;
+		let agentDir: string;
+		let syntheticDir: string;
+		let projectConfig: string;
+		let agentConfig: string;
+		let protectedPaths: string[];
+
+		beforeEach(() => {
+			const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+			projectDir = join(tmpdir(), `heimdall-test-project-${suffix}`);
+			agentDir = join(tmpdir(), `heimdall-test-agent-${suffix}`);
+			syntheticDir = join(tmpdir(), `heimdall-test-synthetic-${suffix}`);
+			projectConfig = join(projectDir, ".pi", "heimdall.json");
+			agentConfig = join(agentDir, "heimdall.json");
+			mkdirSync(join(projectDir, ".pi"), { recursive: true });
+			mkdirSync(agentDir, { recursive: true });
+			mkdirSync(syntheticDir, { recursive: true });
+			writeFileSync(projectConfig, "{\"sandbox\":{\"enabled\":true}}\n");
+			writeFileSync(agentConfig, "{\"disabled\":[\"secret-guard\"]}\n");
+			protectedPaths = heimdallConfigPaths(projectDir, agentDir);
+		});
+
+		afterEach(() => {
+			rmSync(projectDir, { recursive: true, force: true });
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(syntheticDir, { recursive: true, force: true });
+		});
+
+		it("protects project and user config paths, including symlink aliases", () => {
+			const link = join(projectDir, "linked-heimdall.json");
+			symlinkSync(projectConfig, link);
+
+			expect(protectedPaths).toContain(projectConfig);
+			expect(protectedPaths).toContain(agentConfig);
+			expect(isProtectedHeimdallConfigPath("./.pi/heimdall.json", projectDir, protectedPaths)).toBe(true);
+			expect(isProtectedHeimdallConfigPath(link, projectDir, protectedPaths)).toBe(true);
+		});
+
+		it("uses synthetic protected entries to beat writable project policies", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({
+					enabled: true,
+					paths: {
+						".": { mode: "write" },
+						"./.pi/heimdall.json": { mode: "write" },
+					},
+				}),
+				protectedPaths,
+			);
+
+			expect(getSandboxPathAccess(config, projectDir, "./package.json").access).toBe("write");
+			expect(getSandboxPathAccess(config, projectDir, "./.pi/heimdall.json")).toEqual({
+				access: "read",
+				synthetic: true,
+				matchedPath: projectConfig,
+			});
+		});
+
+		it("mounts protected config as empty synthetic content for bash", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } }),
+				[projectConfig],
+			);
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat .pi/heimdall.json");
+			const targetIdx = args.lastIndexOf(projectConfig);
+
+			expect(args[targetIdx - 2]).toBe("--ro-bind");
+			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
+		});
+
+		it("filters protected config matches from grep output without blocking broad search", () => {
+			const output = [
+				".pi/heimdall.json:1: {\"disabled\":[\"secret-guard\"]}",
+				".pi/heimdall.json-2- context",
+				"src/main.ts:3: safe",
+				"",
+				"[100 matches limit reached. Use limit=200 for more, or refine pattern]",
+			].join("\n");
+
+			expect(filterProtectedHeimdallConfigOutput("grep", output, { path: "." }, projectDir, protectedPaths))
+				.toBe("src/main.ts:3: safe");
+		});
+
+		it("filters protected config paths from find output", () => {
+			const output = [
+				".pi/heimdall.json",
+				".pi/taskplane.json",
+				"",
+				"[1000 results limit reached. Use limit=2000 for more, or refine pattern]",
+			].join("\n");
+
+			expect(filterProtectedHeimdallConfigOutput("find", output, { path: "." }, projectDir, protectedPaths))
+				.toBe(".pi/taskplane.json");
+			expect(filterProtectedHeimdallConfigOutput("find", ".pi/heimdall.json", { path: "." }, projectDir, protectedPaths))
+				.toBe("No files found matching pattern");
+		});
+
+		it("filters protected config entries from ls output", () => {
+			expect(filterProtectedHeimdallConfigOutput("ls", "heimdall.json\ntaskplane.json", { path: ".pi" }, projectDir, protectedPaths))
+				.toBe("taskplane.json");
+			expect(filterProtectedHeimdallConfigOutput("ls", "heimdall.json", { path: ".pi" }, projectDir, protectedPaths))
+				.toBe("(empty directory)");
+		});
+
+		it("blocks registered file tool calls to protected config while allowing nearby .pi files", async () => {
+			const harness = sandboxGuardHarness(projectDir, { sandbox: { enabled: false } });
+			await harness.startSession();
+
+			for (const toolName of ["read", "grep", "find", "ls"] as const) {
+				const result = await harness.toolCall(toolName, { path: ".pi/heimdall.json" });
+				expect(result).toMatchObject({
+					block: true,
+					reason: expect.stringContaining("Protected Configuration"),
+				});
+			}
+			for (const toolName of ["write", "edit"] as const) {
+				const result = await harness.toolCall(toolName, { path: ".pi/heimdall.json" });
+				expect(result).toMatchObject({
+					block: true,
+					reason: expect.stringContaining("Protected Configuration"),
+				});
+			}
+
+			expect(await harness.toolCall("read", { path: ".pi/taskplane.json" })).toBeUndefined();
+		});
+
+		it("filters protected config from registered search tool results", async () => {
+			const harness = sandboxGuardHarness(projectDir, { sandbox: { enabled: false } });
+			await harness.startSession();
+
+			const result = await harness.toolResult("grep", { path: "." }, ".pi/heimdall.json:1: secret\nsrc/main.ts:2: safe");
+
+			expect(result?.content).toEqual([{ type: "text", text: "src/main.ts:2: safe" }]);
+		});
+
+		it("blocks registered bash when the sandbox cannot hide protected config", async () => {
+			const harness = sandboxGuardHarness(projectDir, { sandbox: { enabled: false } });
+			await harness.startSession();
+
+			expect(await harness.toolCall("bash", { command: "cat .pi/heimdall.json" })).toMatchObject({
+				block: true,
+				reason: expect.stringContaining("Protected Configuration cannot be hidden without an active sandbox"),
+			});
+			await expect(harness.bash.execute("1", { command: "cat .pi/heimdall.json" }, undefined, undefined, {}))
+				.rejects.toThrow("Protected Configuration cannot be hidden without an active sandbox");
 		});
 	});
 

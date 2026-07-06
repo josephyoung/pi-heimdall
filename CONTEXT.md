@@ -64,6 +64,11 @@ The configured access model that decides whether a path is readable, writable,
 or denied during guarded execution.
 _Avoid_: mount config, filesystem config
 
+**Protected Configuration**:
+Heimdall configuration whose contents and mutability are protected from
+agent-visible tool activity while remaining editable by the Operator outside pi.
+_Avoid_: hidden config, locked config
+
 **Synthetic File**:
 A configured file whose sandbox-visible contents are supplied by Heimdall rather
 than read from the host.
