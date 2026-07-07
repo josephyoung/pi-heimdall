@@ -253,6 +253,8 @@ export function protectHeimdallConfigPaths(
 	config: NormalizedSandboxConfig,
 	protectedPaths: string[],
 ): NormalizedSandboxConfig {
+	if (process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY === "0") return config;
+
 	const paths = { ...config.paths };
 	for (const path of protectedPaths) {
 		// ponytail: synthetic empty file hides config contents; broader parent masking if existence must be hidden too.

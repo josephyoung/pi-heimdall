@@ -273,6 +273,8 @@ adjust only the bwrap mount arguments:
 - `HEIMDALL_BWRAP_BIND_ROOT=/absolute/path` promotes writable mounts below that
   root to `--bind /absolute/path /absolute/path`. The value must be an absolute
   path below `/`; `/` and relative paths are rejected.
+- `HEIMDALL_PROTECT_CONFIG_OVERLAY=0` disables the synthetic empty-file overlay
+  for Heimdall config paths when rootless container mounts reject it.
 
 `HEIMDALL_BWRAP_BIND_ROOT` does not change the sandbox path policy checks, but it
 does make the specified root the actual writable bwrap mount. Use a root that

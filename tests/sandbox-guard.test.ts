@@ -346,6 +346,23 @@ describe("sandbox-guard", () => {
 			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
 		});
 
+		it("can skip protected config synthetic overlay for rootless containers", () => {
+			const previous = process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY;
+			const baseConfig = normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } });
+
+			try {
+				process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY = "0";
+
+				expect(protectHeimdallConfigPaths(baseConfig, [projectConfig])).toBe(baseConfig);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY;
+				} else {
+					process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY = previous;
+				}
+			}
+		});
+
 		it("filters protected config matches from grep output without blocking broad search", () => {
 			const output = [
 				".pi/heimdall.json:1: {\"disabled\":[\"secret-guard\"]}",
