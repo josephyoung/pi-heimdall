@@ -258,7 +258,11 @@ export function protectHeimdallConfigPaths(
 
 	const paths = { ...config.paths };
 	for (const path of protectedPaths) {
-		if (cwd && getSandboxPathAccess(config, cwd, path).access === "none") continue;
+		if (
+			cwd &&
+			getSandboxPathAccess(config, cwd, path).access === "none" &&
+			!canHostMountExposeProtectedPath(config, cwd, path)
+		) continue;
 		// ponytail: synthetic empty file hides config contents; broader parent masking if existence must be hidden too.
 		paths[path] = [...(paths[path] ?? []), { path, content: "" }];
 	}
@@ -486,6 +490,42 @@ function bwrapBindRoot(): string | null {
 	return root;
 }
 
+function hostMountTarget(
+	target: string,
+	entry: SandboxPathEntry,
+	bindRoot: string | null,
+): string | null {
+	if (entry.content !== undefined || entry.mode === "deny" || !existsSync(target)) return null;
+	return entry.mode === "write" && bindRoot && pathMatchesPrefix(target, bindRoot)
+		? bindRoot
+		: target;
+}
+
+function canHostMountExposeProtectedPath(
+	config: NormalizedSandboxConfig,
+	cwd: string,
+	rawPath: string,
+): boolean {
+	const protectedPath = resolveSandboxPath(rawPath, cwd);
+	let bindRoot: string | null = null;
+	try {
+		bindRoot = bwrapBindRoot();
+	} catch {
+		// buildBwrapArgs reports invalid bind roots; retain protection until then.
+	}
+
+	for (const [prefix, entries] of Object.entries(config.paths)) {
+		for (const entry of entries) {
+			const target = resolveSandboxPath(entry.path ?? prefix, cwd);
+			const mountTarget = hostMountTarget(target, entry, bindRoot);
+			if (!mountTarget) continue;
+			if (pathMatchesPrefix(protectedPath, mountTarget)) return true;
+		}
+	}
+
+	return false;
+}
+
 export function buildBwrapArgs(
 	config: NormalizedSandboxConfig,
 	cwd: string,
@@ -517,10 +557,11 @@ export function buildBwrapArgs(
 				continue;
 			}
 
-			if (entry.mode === "deny" || !existsSync(target)) continue;
+			const mountTarget = hostMountTarget(target, entry, bindRoot);
+			if (!mountTarget) continue;
 
 			if (entry.mode === "write") {
-				writeMounts.push(bindRoot && pathMatchesPrefix(target, bindRoot) ? bindRoot : target);
+				writeMounts.push(mountTarget);
 			} else if (entry.path) {
 				overlayReadMounts.push({ source: target, target });
 			} else {

@@ -340,6 +340,7 @@ describe("sandbox-guard", () => {
 				normalizeSandboxConfig({
 					enabled: true,
 					paths: {
+						"/tmp": { mode: "deny" },
 						[agentDir]: { mode: "deny" },
 					},
 				}),
@@ -348,6 +349,74 @@ describe("sandbox-guard", () => {
 			);
 
 			expect(config.paths[agentConfig]).toBeUndefined();
+		});
+
+		it("keeps synthetic protection when a broader mount exposes a denied config", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({
+					enabled: true,
+					paths: {
+						".": { mode: "write" },
+						"./.pi": { mode: "deny" },
+					},
+				}),
+				[projectConfig],
+				projectDir,
+			);
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat .pi/heimdall.json");
+			const targetIdx = args.lastIndexOf(projectConfig);
+
+			expect(args[targetIdx - 2]).toBe("--ro-bind");
+			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
+		});
+
+		it("keeps synthetic protection under a broader read-only mount", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({
+					enabled: true,
+					paths: {
+						".": {},
+						"./.pi/heimdall.json": { mode: "deny" },
+					},
+				}),
+				[projectConfig],
+				projectDir,
+			);
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat .pi/heimdall.json");
+			const targetIdx = args.lastIndexOf(projectConfig);
+
+			expect(args[targetIdx - 2]).toBe("--ro-bind");
+			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
+		});
+
+		it("keeps synthetic protection when the bind root exposes a denied sibling", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			process.env.HEIMDALL_BWRAP_BIND_ROOT = tmpdir();
+
+			try {
+				const config = protectHeimdallConfigPaths(
+					normalizeSandboxConfig({
+						enabled: true,
+						paths: {
+							".": { mode: "write" },
+							[agentDir]: { mode: "deny" },
+						},
+					}),
+					[agentConfig],
+					projectDir,
+				);
+				const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat agent/heimdall.json");
+				const targetIdx = args.lastIndexOf(agentConfig);
+
+				expect(args[targetIdx - 2]).toBe("--ro-bind");
+				expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previous;
+				}
+			}
 		});
 
 		it("mounts protected config as empty synthetic content for bash", () => {
