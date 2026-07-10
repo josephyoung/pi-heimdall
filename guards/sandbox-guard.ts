@@ -206,6 +206,7 @@ function resolveSandboxPath(path: string, cwd: string): string {
 }
 
 function pathMatchesPrefix(path: string, prefix: string): boolean {
+	if (prefix === "/") return path.startsWith("/");
 	return path === prefix || path.startsWith(`${prefix}/`);
 }
 

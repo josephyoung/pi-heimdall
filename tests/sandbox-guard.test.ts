@@ -389,6 +389,25 @@ describe("sandbox-guard", () => {
 			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
 		});
 
+		it("keeps synthetic protection under a root mount", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({
+					enabled: true,
+					paths: {
+						".": { mode: "deny" },
+						"/": {},
+					},
+				}),
+				[projectConfig],
+				projectDir,
+			);
+			const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat .pi/heimdall.json");
+			const targetIdx = args.lastIndexOf(projectConfig);
+
+			expect(args[targetIdx - 2]).toBe("--ro-bind");
+			expect(readFileSync(args[targetIdx - 1], "utf8")).toBe("");
+		});
+
 		it("keeps synthetic protection when the bind root exposes a denied sibling", () => {
 			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
 			process.env.HEIMDALL_BWRAP_BIND_ROOT = tmpdir();
