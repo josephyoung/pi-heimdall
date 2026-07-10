@@ -324,6 +324,7 @@ describe("sandbox-guard", () => {
 					},
 				}),
 				protectedPaths,
+				projectDir,
 			);
 
 			expect(getSandboxPathAccess(config, projectDir, "./package.json").access).toBe("write");
@@ -334,10 +335,26 @@ describe("sandbox-guard", () => {
 			});
 		});
 
+		it("does not recreate protected config already hidden by the path policy", () => {
+			const config = protectHeimdallConfigPaths(
+				normalizeSandboxConfig({
+					enabled: true,
+					paths: {
+						[agentDir]: { mode: "deny" },
+					},
+				}),
+				[agentConfig],
+				projectDir,
+			);
+
+			expect(config.paths[agentConfig]).toBeUndefined();
+		});
+
 		it("mounts protected config as empty synthetic content for bash", () => {
 			const config = protectHeimdallConfigPaths(
 				normalizeSandboxConfig({ enabled: true, paths: { ".": { mode: "write" } } }),
 				[projectConfig],
+				projectDir,
 			);
 			const args = buildBwrapArgs(config, projectDir, syntheticDir, "cat .pi/heimdall.json");
 			const targetIdx = args.lastIndexOf(projectConfig);
@@ -517,8 +534,10 @@ describe("sandbox-guard", () => {
 
 		it("keeps default bwrap device and proc mounts", () => {
 			const previousBindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			const previousBindProc = process.env.HEIMDALL_BWRAP_BIND_PROC;
 			const previousBindRoot = process.env.HEIMDALL_BWRAP_BIND_ROOT;
 			delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			delete process.env.HEIMDALL_BWRAP_BIND_PROC;
 			delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
 
 			try {
@@ -538,6 +557,11 @@ describe("sandbox-guard", () => {
 				} else {
 					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previousBindKernelFs;
 				}
+				if (previousBindProc === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_PROC;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_PROC = previousBindProc;
+				}
 				if (previousBindRoot === undefined) {
 					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
 				} else {
@@ -547,8 +571,10 @@ describe("sandbox-guard", () => {
 		});
 
 		it("can bind host /dev and /proc instead of mounting nested kernel filesystems", () => {
-			const previous = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			const previousBindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			const previousBindProc = process.env.HEIMDALL_BWRAP_BIND_PROC;
 			process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = "1";
+			delete process.env.HEIMDALL_BWRAP_BIND_PROC;
 
 			try {
 				const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
@@ -558,10 +584,41 @@ describe("sandbox-guard", () => {
 				expect(args).not.toContain("--dev");
 				expect(args).not.toContain("--proc");
 			} finally {
-				if (previous === undefined) {
+				if (previousBindKernelFs === undefined) {
 					delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
 				} else {
-					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previous;
+					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previousBindKernelFs;
+				}
+				if (previousBindProc === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_PROC;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_PROC = previousBindProc;
+				}
+			}
+		});
+
+		it("can bind host /dev without exposing the outer proc filesystem", () => {
+			const previousBindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+			const previousBindProc = process.env.HEIMDALL_BWRAP_BIND_PROC;
+			process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = "1";
+			process.env.HEIMDALL_BWRAP_BIND_PROC = "0";
+
+			try {
+				const args = buildBwrapArgs(normalizeSandboxConfig({ enabled: true }), projectDir, syntheticDir, "echo hello");
+
+				expectArgSequence(args, ["--dev-bind", "/dev", "/dev"]);
+				expect(args).not.toContain("/proc");
+				expect(args).not.toContain("--proc");
+			} finally {
+				if (previousBindKernelFs === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS = previousBindKernelFs;
+				}
+				if (previousBindProc === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_PROC;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_PROC = previousBindProc;
 				}
 			}
 		});

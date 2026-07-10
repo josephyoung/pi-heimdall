@@ -270,6 +270,9 @@ adjust only the bwrap mount arguments:
 
 - `HEIMDALL_BWRAP_BIND_KERNEL_FS=1` uses `--dev-bind /dev /dev` and
   `--ro-bind /proc /proc` instead of mounting fresh `/dev` and `/proc`.
+- `HEIMDALL_BWRAP_BIND_PROC=0` omits `/proc` from the sandbox while preserving
+  the configured `/dev` behavior. Use this when the outer container's procfs
+  would expose same-UID process roots through `/proc/<pid>/root`.
 - `HEIMDALL_BWRAP_BIND_ROOT=/absolute/path` promotes writable mounts below that
   root to `--bind /absolute/path /absolute/path`. The value must be an absolute
   path below `/`; `/` and relative paths are rejected.
