@@ -252,11 +252,13 @@ export function isProtectedHeimdallConfigPath(
 export function protectHeimdallConfigPaths(
 	config: NormalizedSandboxConfig,
 	protectedPaths: string[],
+	cwd?: string,
 ): NormalizedSandboxConfig {
 	if (process.env.HEIMDALL_PROTECT_CONFIG_OVERLAY === "0") return config;
 
 	const paths = { ...config.paths };
 	for (const path of protectedPaths) {
+		if (cwd && getSandboxPathAccess(config, cwd, path).access === "none") continue;
 		// ponytail: synthetic empty file hides config contents; broader parent masking if existence must be hidden too.
 		paths[path] = [...(paths[path] ?? []), { path, content: "" }];
 	}
@@ -495,6 +497,7 @@ export function buildBwrapArgs(
 	const writeMounts: string[] = [];
 	const overlayReadMounts: Array<{ source: string; target: string }> = [];
 	const bindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS === "1";
+	const bindProc = process.env.HEIMDALL_BWRAP_BIND_PROC !== "0";
 	const bindRoot = bwrapBindRoot();
 
 	args.push("--tmpfs", "/");
@@ -553,10 +556,12 @@ export function buildBwrapArgs(
 	if (config.userNamespace) args.push("--unshare-user");
 	args.push("--unshare-pid");
 	if (config.network === "none") args.push("--unshare-net");
-	if (bindKernelFs) {
-		args.push("--ro-bind", "/proc", "/proc");
-	} else {
-		args.push("--proc", "/proc");
+	if (bindProc) {
+		if (bindKernelFs) {
+			args.push("--ro-bind", "/proc", "/proc");
+		} else {
+			args.push("--proc", "/proc");
+		}
 	}
 	args.push("--die-with-parent");
 	args.push("--new-session");
@@ -753,6 +758,7 @@ export function registerSandboxGuard(pi: ExtensionAPI, getHeimdallConfig: () => 
 		const config = protectHeimdallConfigPaths(
 			normalizeSandboxConfig(getHeimdallConfig().sandbox as SandboxConfig | undefined),
 			protectedConfigPaths,
+			ctx.cwd,
 		);
 		sandboxConfig = null;
 		bwrapAvailable = false;
