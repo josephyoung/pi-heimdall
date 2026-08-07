@@ -39,7 +39,7 @@ One extension entry point registers six independent guards:
 |---|---|
 | `sandbox-guard` | Applies filesystem, environment, and network policy to bash and file tools; protects Heimdall config |
 | `secret-guard` | Blocks secret-variable references and redacts known secret values from bash output |
-| `env-protect` | Denies real dotenv files while allowing examples and templates |
+| `env-protect` | Blocks direct `read` calls for real dotenv files while allowing examples and templates |
 | `kubectl-secret-guard` | Denies Kubernetes commands that expose secrets, pod environments, or protected finalizers |
 | `sops-secret-guard` | Denies SOPS operations that decrypt or reveal content |
 | `command-policy-guard` | Enforces repository-specific blocked command prefixes |
@@ -86,10 +86,11 @@ The bash sandbox requires Linux and `bubblewrap`. Paths default to read-only;
 use `mode: "write"` for writable paths and `mode: "deny"` for exclusions. The
 most specific matching path wins. `~`, `$VAR`, and `${VAR}` are expanded.
 
-Common system paths and `$HOME` are read-only by default, while the project and
-`/tmp` are writable. Credential stores, cloud configs, editor configs, and AI
-tool configs under the home directory are denied by default. Add explicit rules
-for any additional private paths in your environment.
+Common system paths and `$HOME` are read-only by default, while the project,
+`/tmp`, and `~/.pi` are writable. Heimdall config files remain protected as
+described below. Credential stores, cloud configs, editor configs, and AI tool
+configs under the home directory are denied by default. Add explicit rules for
+any additional private paths in your environment.
 
 Environment handling is ordered as follows:
 
@@ -131,9 +132,9 @@ Policies match tokenized command prefixes in every shell segment:
 {
   "commandPolicies": [
     {
-      "name": "project-test-entrypoint",
-      "blocked": ["npm", "test"],
-      "message": "Use `mise test` for this repository."
+      "name": "no-cargo-test",
+      "blocked": ["cargo", "test"],
+      "message": "Use `mise test` or `mise run test` instead of `cargo test`."
     }
   ]
 }
