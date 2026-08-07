@@ -8,6 +8,13 @@ activity that could expose secrets or bypass a repository policy.
 
 Runtime TypeScript is loaded directly by pi. There is no build step.
 
+## Repository Boundary
+
+- This repository is a permanent fork. All branches, pull requests, merges, and
+  releases target `josephyoung/pi-heimdall` through `origin`.
+- Do not target, synchronize with, or open pull requests against the original
+  upstream repository.
+
 ## Layout
 
 - `extensions/heimdall.ts` loads user/project config, merges it, reports active
