@@ -172,6 +172,7 @@ export function normalizeSandboxConfig(config?: SandboxConfig | Record<string, u
 		enabled: sandbox.enabled ?? DEFAULT_SANDBOX_CONFIG.enabled,
 		network: sandbox.network ?? (legacy?.networkAccess === false ? "none" : DEFAULT_SANDBOX_CONFIG.network),
 		userNamespace: sandbox.userNamespace ?? DEFAULT_SANDBOX_CONFIG.userNamespace,
+		bindRoot: sandbox.bindRoot,
 		paths: mergedPaths,
 		env: {
 			allow: envAllow === undefined ? DEFAULT_SANDBOX_CONFIG.env.allow : envAllow,
@@ -480,13 +481,16 @@ function syntheticFilename(target: string): string {
 	return target.replace(/[^a-zA-Z0-9._-]/g, "_") || "synthetic";
 }
 
-function bwrapBindRoot(): string | null {
-	const raw = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+function bwrapBindRoot(config: NormalizedSandboxConfig, cwd: string): string | null {
+	const configured = config.bindRoot;
+	const raw = configured ?? process.env.HEIMDALL_BWRAP_BIND_ROOT;
 	if (!raw) return null;
 
-	const root = raw.replace(/\/+$/, "") || "/";
+	const expanded = configured === "." ? cwd : expandPath(raw);
+	const root = expanded.replace(/\/+$/, "") || "/";
 	if (!root.startsWith("/") || root === "/") {
-		throw new Error("Invalid HEIMDALL_BWRAP_BIND_ROOT: expected an absolute path below /");
+		const source = configured === undefined ? "HEIMDALL_BWRAP_BIND_ROOT" : "sandbox.bindRoot";
+		throw new Error(`Invalid ${source}: expected \".\" or an absolute path below /`);
 	}
 	return root;
 }
@@ -510,7 +514,7 @@ function canHostMountExposeProtectedPath(
 	const protectedPath = resolveSandboxPath(rawPath, cwd);
 	let bindRoot: string | null = null;
 	try {
-		bindRoot = bwrapBindRoot();
+		bindRoot = bwrapBindRoot(config, cwd);
 	} catch {
 		// buildBwrapArgs reports invalid bind roots; retain protection until then.
 	}
@@ -539,7 +543,7 @@ export function buildBwrapArgs(
 	const overlayReadMounts: Array<{ source: string; target: string }> = [];
 	const bindKernelFs = process.env.HEIMDALL_BWRAP_BIND_KERNEL_FS === "1";
 	const bindProc = process.env.HEIMDALL_BWRAP_BIND_PROC !== "0";
-	const bindRoot = bwrapBindRoot();
+	const bindRoot = bwrapBindRoot(config, cwd);
 
 	args.push("--tmpfs", "/");
 	if (bindKernelFs) {

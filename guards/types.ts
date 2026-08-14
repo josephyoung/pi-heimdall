@@ -16,6 +16,7 @@ export interface SandboxConfig {
 	enabled?: boolean;
 	network?: "host" | "none";
 	userNamespace?: boolean;
+	bindRoot?: string;
 	paths?: Record<string, SandboxPathEntry | SandboxPathEntry[]>;
 	env?: {
 		allow?: string[] | null;
@@ -34,6 +35,7 @@ export interface NormalizedSandboxConfig {
 	enabled: boolean;
 	network: "host" | "none";
 	userNamespace: boolean;
+	bindRoot?: string;
 	paths: Record<string, SandboxPathEntry[]>;
 	env: {
 		allow: string[] | null;
