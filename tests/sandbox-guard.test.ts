@@ -790,6 +790,48 @@ describe("sandbox-guard", () => {
 			}
 		});
 
+		it("can scope the bwrap bind root to the current sandbox cwd", () => {
+			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
+			const usersRoot = join(projectDir, "users");
+			const currentWorkspace = join(usersRoot, "user-a", "workspaces", "default");
+			const siblingWorkspace = join(usersRoot, "user-b", "workspaces", "default");
+			mkdirSync(currentWorkspace, { recursive: true });
+			mkdirSync(siblingWorkspace, { recursive: true });
+			process.env.HEIMDALL_BWRAP_BIND_ROOT = usersRoot;
+
+			try {
+				const config = normalizeSandboxConfig({
+					enabled: true,
+					bindRoot: ".",
+					paths: { ".": { mode: "write" } },
+				});
+				const args = buildBwrapArgs(config, currentWorkspace, syntheticDir, "echo hello");
+
+				expectArgSequence(args, ["--bind", currentWorkspace, currentWorkspace]);
+				expect(args).not.toContain(usersRoot);
+				expect(args).not.toContain(siblingWorkspace);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.HEIMDALL_BWRAP_BIND_ROOT;
+				} else {
+					process.env.HEIMDALL_BWRAP_BIND_ROOT = previous;
+				}
+			}
+		});
+
+		it("rejects unsafe configured bwrap bind roots", () => {
+			for (const bindRoot of ["../sibling", "/"] as const) {
+				const config = normalizeSandboxConfig({
+					enabled: true,
+					bindRoot,
+					paths: { ".": { mode: "write" } },
+				});
+				expect(() => buildBwrapArgs(config, projectDir, syntheticDir, "echo hello")).toThrow(
+					"Invalid sandbox.bindRoot",
+				);
+			}
+		});
+
 		it("normalizes a trailing slash in the bwrap bind root", () => {
 			const previous = process.env.HEIMDALL_BWRAP_BIND_ROOT;
 			const bindRoot = join(projectDir, "opt", "dano");

@@ -62,6 +62,7 @@ Project values win for scalars and objects; arrays are concatenated.
   "sandbox": {
     "enabled": true,
     "network": "host",
+    "bindRoot": ".",
     "paths": {
       ".": { "mode": "write" },
       "~/shared": {},
@@ -85,6 +86,12 @@ Valid `disabled` values are `secret-guard`, `command-policy-guard`,
 The bash sandbox requires Linux and `bubblewrap`. Paths default to read-only;
 use `mode: "write"` for writable paths and `mode: "deny"` for exclusions. The
 most specific matching path wins. `~`, `$VAR`, and `${VAR}` are expanded.
+
+`bindRoot` promotes one allowed writable tree to the actual bubblewrap bind
+mount. Use `"."` when one process hosts multiple isolated sessions: it resolves
+to that session's current workspace without exposing sibling workspaces. An
+explicit absolute path is also supported; `/` and relative escape paths are
+rejected. This setting takes precedence over `HEIMDALL_BWRAP_BIND_ROOT`.
 
 Common system paths and `$HOME` are read-only by default, while the project,
 `/tmp`, and `~/.pi` are writable. Heimdall config files remain protected as
