@@ -4,6 +4,9 @@ Security controls for [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/
 Heimdall puts policy checks around shell and file tools before their input or
 output reaches the model.
 
+Requires Pi `^1.4.0`. Development, type checking, and runtime integration tests use
+exact `@earendil-works/pi-coding-agent@1.4.0`.
+
 ## Fork notice
 
 This repository is a maintained fork of
